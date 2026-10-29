@@ -168,6 +168,7 @@ const el = {
   modelSelect: document.getElementById("modelSelect"),
   settingsStatus: document.getElementById("settingsStatus"),
   saveKey: document.getElementById("saveKey"),
+  testSearch: document.getElementById("testSearch"),
   deleteKey: document.getElementById("deleteKey"),
   backFromSettings: document.getElementById("backFromSettings"),
   outfitActions: document.getElementById("outfitActions"),
@@ -1182,8 +1183,38 @@ el.saveKey.addEventListener("click", async () => {
   }
 });
 
-el.deleteKey.addEventListener("click", () => {
-  state.settings.key = "";
+el.testSearch.addEventListener("click", async () => {
+  if (!hasAiKey()) {
+    setSettingsStatus("bad", "Сначала сохраните ключ — без него поиск не работает.");
+    return;
+  }
+
+  setSettingsStatus("wait", "Ищем пробный запрос…");
+
+  try {
+    const results = await deepseekSearch("белая рубашка оверсайз купить недорого");
+    if (!results.length) {
+      setSettingsStatus(
+        "bad",
+        "Поиск вернул пусто. Возможно, на ключе не включён доступ к поиску или кончились деньги."
+      );
+      return;
+    }
+
+    const sites = [...new Set(results.map((item) => siteLabel(item)))].slice(0, 5);
+    setSettingsStatus(
+      "ok",
+      `Поиск работает: ${results.length} результатов. Сайты: ${sites.join(", ")}.`
+    );
+  } catch (error) {
+    setSettingsStatus(
+      "bad",
+      error instanceof AiError ? error.message : "Поиск не ответил. Проверьте интернет."
+    );
+  }
+});
+
+el.deleteKey.addEventListener("click", () => {  state.settings.key = "";
   persistSettings();
   el.keyInput.value = "";
   clearOutfits();
@@ -1431,6 +1462,26 @@ function itemQuery(item, gender) {
   return `${item} ${words} купить недорого`.replace(/\s+/g, " ").trim().slice(0, 128);
 }
 
+function shopQuery(item) {
+  const base = "site:market.yandex.ru OR site:lamoda.ru OR site:wildberries.ru OR site:ozon.ru";
+  const full = `${base} ${item}`;
+  if (full.length <= 128) return full;
+  const short = `site:market.yandex.ru OR site:lamoda.ru ${item}`;
+  if (short.length <= 128) return short;
+  return `site:market.yandex.ru ${item}`.slice(0, 128);
+}
+
+function siteLabel(result) {
+  const shop = shopFor(result.url);
+  if (shop) return shop.name;
+  if (result.site_name) return String(result.site_name);
+  try {
+    return new URL(result.url).hostname.replace(/^www\./, "");
+  } catch {
+    return "сайт";
+  }
+}
+
 async function deepseekSearch(query, signal) {
   const response = await fetch(SEARCH_URL, {
     method: "POST",
@@ -1472,20 +1523,51 @@ async function deepseekFetch(url, signal) {
   return data && typeof data.content === "string" ? data.content : null;
 }
 
+function itemStem(item) {
+  const words = String(item)
+    .toLowerCase()
+    .replace(/[^а-яёa-z0-9\s-]/gi, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 4)
+    .sort((a, b) => b.length - a.length);
+  const word = words[0] || "";
+  return word.slice(0, Math.max(4, word.length - 2));
+}
+
+function matchesItem(text, stem) {
+  if (!stem) return true;
+  return String(text || "").toLowerCase().includes(stem);
+}
+
 async function findOffers(item, gender, signal) {
   const query = itemQuery(item, gender);
   const cached = state.searchCache[query];
   if (cached && Date.now() - cached.at < SEARCH_TTL) return cached.offers;
 
-  const results = await deepseekSearch(query, signal);
+  // сначала ищем прямо в магазинах — так выше шанс попасть в товар, а не в статью
+  let results = await deepseekSearch(shopQuery(item), signal);
+
+  // не нашлось — ищем обычными словами и уже потом отбираем магазины
+  if (!results.length) {
+    results = await deepseekSearch(query, signal);
+  }
+
+  const stem = itemStem(item);
   const seen = new Set();
-  const offers = [];
+  const shopOffers = [];
+  const otherOffers = [];
   let fetchBudget = 2;
 
   for (const result of results) {
-    const shop = shopFor(result.url);
-    if (!shop || seen.has(result.url)) continue;
+    if (!result || !result.url || seen.has(result.url)) continue;
     seen.add(result.url);
+
+    const haystack = `${result.title || ""} ${result.snippet || ""} ${result.summary || ""}`;
+    const relevant = matchesItem(haystack, stem);
+    const shop = shopFor(result.url);
+
+    // заведомо не про эту вещь — не показываем, чтобы не путать
+    if (!relevant) continue;
 
     let price =
       parsePrice(result.snippet) || parsePrice(result.title) || parsePrice(result.summary) || null;
@@ -1501,16 +1583,23 @@ async function findOffers(item, gender, signal) {
       }
     }
 
-    offers.push({
-      shop: shop.name,
+    const offer = {
+      shop: siteLabel(result),
       title: String(result.title || item).trim(),
       url: result.url,
       price,
-    });
+    };
+
+    if (shop) shopOffers.push(offer);
+    else otherOffers.push(offer);
   }
 
-  offers.sort((a, b) => (a.price || Infinity) - (b.price || Infinity));
-  const top = offers.slice(0, 3);
+  shopOffers.sort((a, b) => (a.price || Infinity) - (b.price || Infinity));
+  const top = shopOffers.slice(0, 3);
+
+  // если магазины не нашлись, но интернет нашёл подходящее — покажем честно
+  if (!top.length) top.push(...otherOffers.slice(0, 3));
+
   state.searchCache[query] = { at: Date.now(), offers: top };
   persistSearchCache();
   return top;
@@ -2074,6 +2163,19 @@ function buildOutfitCard(outfit, index) {
       hint.textContent = "Сначала самые дешёвые из найденных.";
       buy.append(hint);
     }
+
+    const how = document.createElement("details");
+    how.className = "offers-how";
+    const summary = document.createElement("summary");
+    summary.textContent = "Как искали";
+    const queries = document.createElement("ul");
+    outfit.items.forEach((item) => {
+      const line = document.createElement("li");
+      line.textContent = itemQuery(item[1], state.profile.gender);
+      queries.append(line);
+    });
+    how.append(summary, queries);
+    buy.append(how);
 
     const note = document.createElement("p");
     note.className = "offers-note";
