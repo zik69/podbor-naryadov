@@ -97,8 +97,11 @@ const AI_MODELS = [
 
 const SEARCH_URL = `${DEEPSEEK_API}/v1/tools/search`;
 const FETCH_URL = `${DEEPSEEK_API}/v1/tools/fetch`;
-const SEARCH_KEY = "naryady.poisk.v3";
+const SEARCH_KEY = "naryady.poisk.v4";
 const SEARCH_TTL = 15 * 60 * 1000;
+
+// подсказка поиску, что человек и магазины — в России; это не данные о человеке
+const RU_LOCALIZATION = "95.108.213.1";
 
 const SHOPS = [
   { host: "market.yandex.ru", name: "Яндекс Маркет", search: "https://market.yandex.ru/search?text=" },
@@ -2311,6 +2314,8 @@ function buildAiMessages(values, gender, occasionLabels, exclude) {
 
   const system = [
     "Ты — помощник по подбору одежды. Пишешь по-русски, простыми словами, коротко.",
+    "Человек живёт в России: советуй вещи, которые можно купить в российских магазинах (Яндекс Маркет, Lamoda, Wildberries, Ozon), и не ссылайся на зарубежные бренды, которых здесь нет.",
+    "Учитывай умеренный климат и одежду слоями.",
     "Правила:",
     "- советуешь только одежду, обувь и аксессуары;",
     "- не оцениваешь внешность, лицо и тело человека, не сравниваешь людей;",
@@ -2520,12 +2525,12 @@ function parsePrice(text) {
 
 function itemQuery(item, gender) {
   const words = gender === "женский" ? "женская" : gender === "мужской" ? "мужская" : "";
-  return `${item} ${words}`.replace(/\s+/g, " ").trim().slice(0, 128);
+  return `${item} ${words} lang:ru`.replace(/\s+/g, " ").trim().slice(0, 128);
 }
 
 function shopQuery(shopHost, item, gender) {
   const words = gender === "женский" ? "женская" : gender === "мужской" ? "мужская" : "";
-  return `site:${shopHost} ${item} ${words}`.replace(/\s+/g, " ").trim().slice(0, 128);
+  return `site:${shopHost} ${item} ${words} lang:ru`.replace(/\s+/g, " ").trim().slice(0, 128);
 }
 
 function siteLabel(result) {
@@ -2551,6 +2556,7 @@ async function deepseekSearch(query, signal) {
       count: 10,
       need_content: false,
       ori_question: query.slice(0, 128),
+      localization: RU_LOCALIZATION,
     }),
     signal,
   });
@@ -3599,7 +3605,7 @@ async function startOutfits(forceRules = false) {
       renderOutfitCards();
       renderOutfitSource();
       el.outfitNote.textContent =
-        "Образы придумала модель. Если что-то не про вас — нажмите «Не нравится».";
+        "Образы придумала модель. Если что-то не про вас — нажмите «Не нравится». Магазины и цены — российские.";
       el.outfitNote.hidden = false;
       renderOutfitActions("ready");
     } catch (error) {
@@ -3635,7 +3641,7 @@ async function startOutfits(forceRules = false) {
     clearStatus(el.outfitStatus);
     renderOutfitCards();
     renderOutfitSource();
-    el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
+    el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените. Магазины и цены — российские.";
     el.outfitNote.hidden = false;
     renderOutfitActions("ready");
   } catch (error) {
