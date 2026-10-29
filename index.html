@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4efe8">
+  <title>Подбор нарядов — фото для разбора</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2c8 0 14 5.4 14 13 0 8-6 15-14 15S2 23 2 15C2 7.4 8 2 16 2z' fill='%23a8552f'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true"></span>
+        <span class="brand__name">Подбор нарядов</span>
+      </div>
+      <div class="steps" id="steps">Шаг 1 из 3</div>
+    </header>
+
+    <main class="main">
+      <section class="screen" id="screen-start" aria-labelledby="title-start">
+        <p class="eyebrow">знакомство</p>
+        <h1 id="title-start" tabindex="-1">Покажите ассистенту<br>своё лицо</h1>
+        <p class="lead">
+          По одному фото он разберёт типаж и форму лица, а потом подберёт образы,
+          которые вам идут.
+        </p>
+
+        <div class="dropzone" id="dropzone">
+          <div class="dropzone__art" aria-hidden="true">
+            <svg viewBox="0 0 120 120" role="presentation">
+              <rect x="14" y="10" width="92" height="92" rx="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-dasharray="7 8"/>
+              <circle cx="60" cy="50" r="17" fill="none" stroke="currentColor" stroke-width="2.5"/>
+              <path d="M34 88c4-13 14-20 26-20s22 7 26 20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+
+          <button class="btn btn--primary" type="button" id="pickBtn">Добавить фото</button>
+          <button class="btn btn--ghost" type="button" id="cameraBtn">Снять на камеру</button>
+          <p class="hint">JPG или PNG, до 25 МБ. Можно перетащить файл сюда.</p>
+        </div>
+
+        <div class="tips" aria-label="Какое фото подойдёт">
+          <h2 class="tips__title">Чтобы разбор получился</h2>
+          <ul class="tips__list">
+            <li>Лицо целиком, смотреть в камеру.</li>
+            <li>Без тёмных очков и сильных фильтров.</li>
+            <li>Дневной свет, без резких теней.</li>
+            <li>На фото только вы.</li>
+          </ul>
+        </div>
+
+        <p class="privacy">
+          <span class="privacy__icon" aria-hidden="true">🔒</span>
+          Фото остаётся на вашем устройстве. Мы не отправляем его на сервер
+          и не показываем никому.
+        </p>
+      </section>
+
+      <section class="screen" id="screen-review" aria-labelledby="title-review" hidden>
+        <p class="eyebrow">проверка фото</p>
+        <h1 id="title-review" tabindex="-1">Смотрим фото</h1>
+
+        <div class="review-grid">
+          <figure class="preview">
+            <img id="preview" alt="Выбранное фото">
+          </figure>
+
+          <div class="review-side">
+            <div class="status" id="status" role="status" aria-live="polite"></div>
+            <ol class="checks" id="checks" aria-label="Что проверяем"></ol>
+          </div>
+        </div>
+
+        <div class="actions" id="actions"></div>
+      </section>
+      <section class="screen" id="screen-analysis" aria-labelledby="title-analysis" hidden>
+        <p class="eyebrow">разбор</p>
+        <h1 id="title-analysis" tabindex="-1">Ваш типаж<br>и форма лица</h1>
+        <p class="lead">
+          Коротко о том, что видит ассистент. Всё спорное можно поправить —
+          дальше советы будут опираться на ваш выбор.
+        </p>
+
+        <div class="status" id="analysisStatus" role="status" aria-live="polite"></div>
+
+        <div class="review-grid">
+          <div class="analysis-photo" id="analysisPhoto"></div>
+          <div class="analysis-cards" id="analysisCards"></div>
+        </div>
+
+        <p class="analysis-note" id="analysisNote">
+          Это версия ассистента, а не приговор. Если не совпадает — поправьте.
+        </p>
+
+        <div class="actions" id="analysisActions"></div>
+      </section>
+
+    </main>
+
+    <footer class="footer">
+      <p>Совет, а не приговор: разбор всегда можно поправить руками.</p>
+    </footer>
+  </div>
+
+  <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden>
+  <input type="file" id="cameraInput" accept="image/*" capture="user" hidden>
+
+  <script defer src="app.js"></script>
+</body>
+</html>

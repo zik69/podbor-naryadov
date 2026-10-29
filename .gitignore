@@ -1,0 +1,5 @@
+# временные файлы и мусор
+.tmp-test/
+Thumbs.db
+desktop.ini
+.DS_Store
