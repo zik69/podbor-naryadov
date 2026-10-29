@@ -17,6 +17,7 @@
       </div>
       <div class="topbar__right">
         <div class="steps" id="steps">Шаг 1 из 3</div>
+        <button class="settings-btn" id="wardrobeBtn" type="button">Гардероб</button>
         <button class="settings-btn" id="settingsBtn" type="button">Настройки</button>
       </div>
     </header>
@@ -144,8 +145,61 @@
         <div class="actions" id="outfitActions"></div>
       </section>
 
-      <section class="screen" id="screen-settings" aria-labelledby="title-settings" hidden>
-        <p class="eyebrow">настройки</p>
+      <section class="screen" id="screen-wardrobe" aria-labelledby="title-wardrobe" hidden>
+        <p class="eyebrow">гардероб</p>
+        <h1 id="title-wardrobe" tabindex="-1">Мой гардероб</h1>
+        <p class="lead">
+          Добавьте свои вещи — и ассистент соберёт образы из того, что уже есть.
+        </p>
+
+        <div class="ward-card">
+          <p class="ward-card__title">Добавить вещь</p>
+
+          <label class="ward-photo" id="wardPhotoBox">
+            <input type="file" id="wardPhoto" accept="image/*" hidden>
+            <img id="wardPreview" alt="Фото вещи" hidden>
+            <span class="ward-photo__hint" id="wardPhotoHint">Нажмите, чтобы добавить фото</span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Что это</span>
+            <select id="wardType">
+              <option value="верх">Верх — рубашка, футболка, джемпер</option>
+              <option value="низ">Низ — брюки, джинсы, юбка</option>
+              <option value="обувь">Обувь</option>
+              <option value="верхний слой">Верхний слой — куртка, пальто, пиджак</option>
+              <option value="платье">Платье</option>
+            </select>
+          </label>
+
+          <div class="field">
+            <span class="field__label">Цвет</span>
+            <div class="chips" id="wardColors" role="group" aria-label="Цвет вещи"></div>
+            <label class="ward-custom">
+              <span>Другой:</span>
+              <input type="color" id="wardColor" value="#8b8b5a" aria-label="Свой цвет">
+            </label>
+          </div>
+
+          <label class="field">
+            <span class="field__label">Название — не обязательно</span>
+            <input id="wardName" type="text" maxlength="60" placeholder="Например: любимая белая рубашка">
+          </label>
+
+          <div class="status" id="wardStatus" role="status" aria-live="polite"></div>
+
+          <button class="btn btn--primary" id="wardAdd" type="button">Добавить вещь</button>
+        </div>
+
+        <div class="ward-list" id="wardList"></div>
+        <p class="ward-empty" id="wardEmpty">
+          Пока пусто. Добавьте хотя бы верх, низ и обувь — и можно собирать образы.
+        </p>
+
+        <div class="actions" id="wardActions"></div>
+      </section>
+
+      <section class="screen" id="screen-settings" aria-labelledby="title-settings" hidden>        <p class="eyebrow">настройки</p>
         <h1 id="title-settings" tabindex="-1">Ключ ИИ</h1>
         <p class="lead">
           Сейчас образы собирают наши правила. Если вставить ключ DeepSeek, образы

@@ -24,6 +24,26 @@ const LANDMARK_MODEL =
 const RAZBOR_KEY = "naryady.razbor.v1";
 const PROFILE_KEY = "naryady.profil.v1";
 const SETTINGS_KEY = "naryady.nastroyki.v1";
+const WARDROBE_KEY = "naryady.garderob.v1";
+
+const WARDROBE_COLORS = [
+  { name: "белый", hex: "#f2efe9" },
+  { name: "чёрный", hex: "#232323" },
+  { name: "серый", hex: "#9aa0a6" },
+  { name: "бежевый", hex: "#ddcdb6" },
+  { name: "песочный", hex: "#d9bd94" },
+  { name: "коричневый", hex: "#7a5641" },
+  { name: "синий", hex: "#3f5b86" },
+  { name: "голубой", hex: "#7b93a8" },
+  { name: "зелёный", hex: "#4e6b4a" },
+  { name: "оливковый", hex: "#8b8b5a" },
+  { name: "красный", hex: "#a83a32" },
+  { name: "бордовый", hex: "#7b2b3b" },
+  { name: "розовый", hex: "#c98a94" },
+  { name: "жёлтый", hex: "#c9a227" },
+];
+
+const WARDROBE_TYPES = ["верх", "низ", "обувь", "верхний слой", "платье"];
 
 const DEEPSEEK_API = "https://api.deepseek.com";
 
@@ -171,6 +191,22 @@ const el = {
   testSearch: document.getElementById("testSearch"),
   deleteKey: document.getElementById("deleteKey"),
   backFromSettings: document.getElementById("backFromSettings"),
+  wardrobeBtn: document.getElementById("wardrobeBtn"),
+  screenWardrobe: document.getElementById("screen-wardrobe"),
+  titleWardrobe: document.getElementById("title-wardrobe"),
+  wardPhotoBox: document.getElementById("wardPhotoBox"),
+  wardPhoto: document.getElementById("wardPhoto"),
+  wardPreview: document.getElementById("wardPreview"),
+  wardPhotoHint: document.getElementById("wardPhotoHint"),
+  wardType: document.getElementById("wardType"),
+  wardColors: document.getElementById("wardColors"),
+  wardColor: document.getElementById("wardColor"),
+  wardName: document.getElementById("wardName"),
+  wardStatus: document.getElementById("wardStatus"),
+  wardAdd: document.getElementById("wardAdd"),
+  wardList: document.getElementById("wardList"),
+  wardEmpty: document.getElementById("wardEmpty"),
+  wardActions: document.getElementById("wardActions"),
   outfitActions: document.getElementById("outfitActions"),
 };
 
@@ -191,6 +227,8 @@ const state = {
   profile: { gender: "", hideCompliment: false },
   settings: { key: "", model: "deepseek-flash" },
   searchCache: {},
+  wardrobe: { v: 1, items: [] },
+  ward: { photo: "", color: WARDROBE_COLORS[4] },
 };
 
 let detectorPromise = null;
@@ -949,6 +987,15 @@ function renderAnalysisActions() {
 
   el.analysisActions.append(another);
 
+  if (state.wardrobe.items.length >= 2) {
+    const mine = document.createElement("button");
+    mine.type = "button";
+    mine.className = "btn btn--ghost";
+    mine.textContent = "Собрать из моего";
+    mine.addEventListener("click", startWardrobeOutfits);
+    el.analysisActions.append(mine);
+  }
+
   const stored = Boolean(loadRazbor());
   if (stored) {
     const clear = document.createElement("button");
@@ -1051,6 +1098,546 @@ el.complimentBack.addEventListener("click", () => {
   renderCompliment();
   el.complimentHide.focus();
 });
+
+// ── гардероб ───────────────────────────────────────────────
+
+function loadWardrobe() {
+  try {
+    const raw = localStorage.getItem(WARDROBE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1 || !Array.isArray(data.items)) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function persistWardrobe() {
+  try {
+    localStorage.setItem(WARDROBE_KEY, JSON.stringify(state.wardrobe));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function setWardStatus(kind, text) {
+  el.wardStatus.className = `status status--${kind}`;
+  el.wardStatus.replaceChildren();
+  if (kind === "wait") el.wardStatus.append(spinner());
+  el.wardStatus.append(document.createTextNode(text));
+}
+
+function renderWardColors() {
+  el.wardColors.replaceChildren();
+  for (const color of WARDROBE_COLORS) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip chip--color";
+    chip.setAttribute("aria-pressed", String(state.ward.color.name === color.name));
+    chip.setAttribute("aria-label", color.name);
+
+    const dot = document.createElement("span");
+    dot.className = "chip__dot";
+    dot.style.background = color.hex;
+    dot.setAttribute("aria-hidden", "true");
+
+    chip.append(dot, document.createTextNode(color.name));
+    chip.addEventListener("click", () => {
+      state.ward.color = color;
+      el.wardColor.value = color.hex;
+      renderWardColors();
+    });
+    el.wardColors.append(chip);
+  }
+}
+
+function openWardrobe() {
+  renderWardColors();
+  renderWardrobe();
+  clearStatus(el.wardStatus);
+
+  el.wardActions.replaceChildren();
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "btn btn--ghost";
+  back.textContent = "Назад";
+  back.addEventListener("click", () => showScreen(state.lastScreen || "start"));
+  el.wardActions.append(back);
+
+  showScreen("wardrobe");
+}
+
+function renderWardrobe() {
+  const items = state.wardrobe.items;
+  el.wardList.replaceChildren();
+  el.wardEmpty.hidden = items.length > 0;
+
+  for (const item of items) {
+    const card = document.createElement("article");
+    card.className = "ward-item";
+
+    if (item.photo) {
+      const img = document.createElement("img");
+      img.src = item.photo;
+      img.alt = item.name || item.type;
+      img.loading = "lazy";
+      card.append(img);
+    } else {
+      const empty = document.createElement("div");
+      empty.className = "ward-item__empty";
+      empty.textContent = "без фото";
+      card.append(empty);
+    }
+
+    const body = document.createElement("div");
+    body.className = "ward-item__body";
+
+    const type = document.createElement("p");
+    type.className = "ward-item__type";
+    type.textContent = item.type;
+
+    const title = document.createElement("p");
+    title.className = "ward-item__name";
+    title.textContent = item.name || capitalize(item.type);
+
+    const color = document.createElement("p");
+    color.className = "ward-item__color";
+    const dot = document.createElement("span");
+    dot.className = "chip__dot";
+    dot.style.background = item.color.hex;
+    color.append(dot, document.createTextNode(item.color.name));
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ward-item__remove";
+    remove.textContent = "Удалить";
+    remove.addEventListener("click", () => removeWardItem(item.id));
+
+    body.append(type, title, color, remove);
+    card.append(body);
+    el.wardList.append(card);
+  }
+}
+
+async function readWardPhoto(file) {
+  const source = await decodeImage(file);
+  const width = source.width || source.naturalWidth;
+  const height = source.height || source.naturalHeight;
+  const scale = Math.min(1, 380 / Math.max(width, height));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+
+  return canvas.toDataURL("image/jpeg", 0.72);
+}
+
+el.wardPhoto.addEventListener("change", async () => {
+  const file = el.wardPhoto.files && el.wardPhoto.files[0];
+  if (!file) return;
+
+  if (!/^image\//.test(file.type)) {
+    setWardStatus("bad", "Это не похоже на фото. Подойдёт JPG или PNG.");
+    return;
+  }
+
+  try {
+    const photo = await readWardPhoto(file);
+    state.ward.photo = photo;
+    el.wardPreview.src = photo;
+    el.wardPreview.hidden = false;
+    el.wardPhotoHint.hidden = true;
+    setWardStatus("ok", "Фото добавлено. Теперь выберите тип и цвет.");
+  } catch {
+    setWardStatus("bad", "Не получилось открыть фото. Попробуйте другое.");
+  }
+});
+
+el.wardColor.addEventListener("input", () => {
+  const hex = el.wardColor.value;
+  const known = WARDROBE_COLORS.find((color) => color.hex.toLowerCase() === hex.toLowerCase());
+  state.ward.color = known || { name: "свой оттенок", hex };
+  renderWardColors();
+});
+
+el.wardAdd.addEventListener("click", () => {
+  const type = el.wardType.value;
+  const name = el.wardName.value.trim();
+
+  const item = {
+    id: `w${Date.now()}${Math.floor(Math.random() * 1000)}`,
+    type,
+    name,
+    color: state.ward.color,
+    photo: state.ward.photo,
+    at: Date.now(),
+  };
+
+  state.wardrobe.items.push(item);
+  if (!persistWardrobe()) {
+    state.wardrobe.items.pop();
+    setWardStatus("bad", "Память браузера заполнена. Удалите пару вещей и попробуйте снова.");
+    return;
+  }
+
+  state.ward.photo = "";
+  el.wardPhoto.value = "";
+  el.wardPreview.hidden = true;
+  el.wardPreview.removeAttribute("src");
+  el.wardPhotoHint.hidden = false;
+  el.wardName.value = "";
+
+  renderWardrobe();
+  setWardStatus("ok", `Добавили: ${type}, ${item.color.name}.`);
+
+  if (state.outfits && state.outfits.source === "wardrobe") {
+    clearOutfits();
+    el.outfitCards.replaceChildren();
+  }
+  if (state.razbor) renderAnalysisActions();
+});
+
+function removeWardItem(id) {
+  state.wardrobe.items = state.wardrobe.items.filter((item) => item.id !== id);
+  persistWardrobe();
+  renderWardrobe();
+  setWardStatus("ok", "Вещь удалена.");
+
+  if (state.outfits && state.outfits.source === "wardrobe") {
+    clearOutfits();
+    el.outfitCards.replaceChildren();
+  }
+  if (state.razbor) renderAnalysisActions();
+}
+
+el.wardrobeBtn.addEventListener("click", openWardrobe);
+
+function wardrobeGroups() {
+  const items = state.wardrobe.items;
+  const by = (type) => items.filter((item) => item.type === type);
+  return {
+    tops: by("верх"),
+    bottoms: by("низ"),
+    shoes: by("обувь"),
+    outers: by("верхний слой"),
+    dresses: by("платье"),
+  };
+}
+
+function warmthOf(hex) {
+  const value = String(hex || "").replace("#", "");
+  if (value.length !== 6) return 0;
+  const r = parseInt(value.slice(0, 2), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return r - b;
+}
+
+function pickOuter(groups, values) {
+  if (!groups.outers.length) return null;
+  const warm = values.temperature === "тёплые";
+  return (
+    groups.outers.find((item) => (warmthOf(item.color.hex) > 0) === warm) || groups.outers[0]
+  );
+}
+
+function wardrobeLooks(values) {
+  const groups = wardrobeGroups();
+  const missing = [];
+
+  if (!groups.tops.length && !groups.dresses.length) missing.push("верх");
+  if (!groups.bottoms.length && !groups.dresses.length) missing.push("низ");
+  if (!groups.shoes.length) missing.push("обувь");
+
+  if (missing.length) return { looks: [], missing };
+
+  const looks = [];
+  const outer = pickOuter(groups, values);
+
+  for (const dress of groups.dresses) {
+    const shoes = groups.shoes[looks.length % groups.shoes.length];
+    looks.push({ parts: [dress, shoes, outer].filter(Boolean), kind: "dress" });
+  }
+
+  const combos = [];
+  for (const top of groups.tops) {
+    for (const bottom of groups.bottoms) {
+      for (const shoes of groups.shoes) {
+        combos.push({ parts: [top, bottom, shoes, outer].filter(Boolean), kind: "set" });
+      }
+    }
+  }
+
+  const warm = values.temperature === "тёплые";
+  const score = (look) => {
+    let value = 0;
+    if ((warmthOf(look.parts[0].color.hex) > 0) === warm) value += 2;
+    const warmParts = look.parts.filter((part) => warmthOf(part.color.hex) > 0).length;
+    if (warmParts === 0 || warmParts === look.parts.length) value += 1;
+    return value;
+  };
+
+  combos.sort((a, b) => score(b) - score(a));
+  looks.push(...combos);
+
+  return { looks, missing: [] };
+}
+
+function wardrobeSignature(look) {
+  return look.parts.map((part) => part.id).join("|");
+}
+
+function makeWardrobeCard(look, values, index) {
+  const parts = look.parts;
+  const colors = [];
+  for (const part of parts) {
+    if (!colors.some((color) => color.name === part.color.name)) colors.push(part.color);
+    if (colors.length === 2) break;
+  }
+
+  const names = colors.map((color) => color.name);
+  const warmParts = parts.filter((part) => warmthOf(part.color.hex) > 0).length;
+  const harmony = warmParts === 0 || warmParts === parts.length;
+
+  const why = [
+    "Всё из вашего гардероба — покупать ничего не нужно.",
+    names.length > 1
+      ? `Цвета: ${names.join(" и ")}. ${harmony ? "Оттенки близкие — смотрится спокойно." : "Тёплый и холодный рядом — получается контраст."}`
+      : `Цвет: ${names[0] || "спокойный"}.`,
+    values
+      ? `Под ваш разбор: ${values.features} черты, ${values.temperature} оттенки.`
+      : "",
+  ].filter(Boolean);
+
+  const labels = ["на каждый день", "на прогулку", "на выход"];
+
+  return {
+    occasion: `wardrobe-${index}`,
+    label: labels[index % labels.length],
+    title: "Образ из ваших вещей",
+    items: parts.map((part) => [capitalize(part.type), part.name || capitalize(part.type)]),
+    colors,
+    why,
+    photos: parts.filter((part) => part.photo).map((part) => part.photo),
+    variant: 0,
+    liked: false,
+    fromWardrobe: true,
+  };
+}
+
+function buildWardrobeCards(values, round = 0) {
+  const { looks, missing } = wardrobeLooks(values);
+  if (missing.length) return { cards: [], missing };
+
+  const ordered = looks.slice();
+  const shift = round % Math.max(1, ordered.length);
+  const rotated = ordered.slice(shift).concat(ordered.slice(0, shift));
+
+  const cards = [];
+  const used = new Set();
+  for (const look of rotated) {
+    if (cards.length >= 3) break;
+    const signature = wardrobeSignature(look);
+    if (used.has(signature)) continue;
+    used.add(signature);
+    const card = makeWardrobeCard(look, values, cards.length);
+    card.signature = signature;
+    cards.push(card);
+  }
+
+  return { cards, missing: [] };
+}
+
+function openWardrobeMissing(missing) {
+  setOutfitStatus("bad", "Для комплекта не хватает вещей.");
+  el.outfitNote.textContent = `Добавьте в гардероб: ${missing.join(", ")}. И можно собирать образы.`;
+  el.outfitNote.hidden = false;
+  renderOutfitActions("wardrobeMissing");
+}
+
+function replaceWardrobe(index) {
+  const values = state.razbor?.values || {};
+  const { looks, missing } = wardrobeLooks(values);
+  if (missing.length) {
+    openWardrobeMissing(missing);
+    return;
+  }
+
+  const used = new Set(state.outfits.cards.map((card) => card.signature || ""));
+  const free = looks.find((look) => !used.has(wardrobeSignature(look)));
+
+  if (!free) {
+    setOutfitStatus("ok", "Больше новых сочетаний нет — добавьте ещё вещей в гардероб.");
+    return;
+  }
+
+  const card = makeWardrobeCard(free, values, index);
+  card.signature = wardrobeSignature(free);
+  state.outfits.cards[index] = card;
+  persistOutfits();
+  renderOutfitCards();
+  setOutfitStatus("ok", "Собрали другой комплект из ваших вещей.");
+}
+
+function validWardrobeLook(parts, groups) {
+  const has = (type) => parts.some((part) => part.type === type);
+  const hasTop = has("верх") || has("платье");
+  if (!hasTop) return false;
+
+  if (has("платье")) {
+    return groups.shoes.length ? has("обувь") : true;
+  }
+
+  if (groups.bottoms.length && !has("низ")) return false;
+  if (groups.shoes.length && !has("обувь")) return false;
+  return true;
+}
+
+async function buildWardrobeCardsAi(values, signal) {
+  const items = state.wardrobe.items;
+  const list = items
+    .map((item) => `${item.id} | ${item.type} | ${item.color.name}${item.name ? " | " + item.name : ""}`)
+    .join("\n");
+
+  const system = [
+    "Ты — стилист. Собираешь комплекты только из вещей, которые есть в списке.",
+    "Не выдумывай новые вещи. Не оценивай внешность и тело человека.",
+    "Пиши по-русски, коротко.",
+    "Отвечай строго одним JSON-объектом, без пояснений и markdown.",
+  ].join("\n");
+
+  const user = `Разбор: форма лица — ${values.shape}; черты — ${values.features}; оттенки — ${values.temperature}; контраст — ${values.contrast}.
+
+Вещи (id | тип | цвет | название):
+${list}
+
+Собери 2–3 комплекта только из этих вещей. В каждом 2–4 вещи; если есть верх и низ — возьми их, обувь тоже. Ничего не выдумывай.
+Верни JSON: {"looks":[{"title":"...","item_ids":["id1","id2"],"why":["...","..."]}]}`;
+
+  const response = await fetch(`${DEEPSEEK_API}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${state.settings.key}`,
+    },
+    body: JSON.stringify({
+      model: state.settings.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.7,
+      max_tokens: 900,
+      response_format: { type: "json_object" },
+      stream: false,
+    }),
+    signal,
+  });
+
+  if (!response.ok) throw new AiError(aiErrorText(response.status), response.status);
+
+  const data = await response.json();
+  const text = (data.choices && data.choices[0] && data.choices[0].message
+    ? data.choices[0].message.content
+    : "") || "";
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new AiError("Модель ответила не по-нашему.");
+  }
+
+  const looks = parsed && Array.isArray(parsed.looks) ? parsed.looks : [];
+  const cards = [];
+  const groups = wardrobeGroups();
+
+  for (const look of looks) {
+    const ids = Array.isArray(look.item_ids) ? look.item_ids.map(String) : [];
+    const parts = ids
+      .map((id) => items.find((item) => item.id === id))
+      .filter(Boolean);
+    if (parts.length < 2) continue;
+    if (!validWardrobeLook(parts, groups)) continue;
+
+    const card = makeWardrobeCard({ parts }, values, cards.length);
+    card.title = String(look.title || card.title).trim();
+    const why = (Array.isArray(look.why) ? look.why : [])
+      .map((line) => String(line).trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    if (why.length) card.why = why;
+    card.signature = ids.join("|");
+    cards.push(card);
+    if (cards.length >= 3) break;
+  }
+
+  if (!cards.length) throw new AiError("Модель не собрала комплекты.");
+  return cards;
+}
+
+async function startWardrobeOutfits() {
+  const values = state.razbor?.values || {};
+  const { cards, missing } = buildWardrobeCards(values);
+
+  showScreen("outfits");
+  renderOutfitWho();
+  el.outfitCards.replaceChildren();
+
+  if (missing.length) {
+    openWardrobeMissing(missing);
+    return;
+  }
+
+  const run = ++state.outfitRun;
+  let aiFailed = false;
+
+  if (hasAiKey()) {
+    const controller = new AbortController();
+    state.outfitAbort = controller;
+    setOutfitStatus("wait", "Собираем из ваших вещей вместе с моделью…");
+    renderOutfitActions("loading");
+
+    try {
+      const aiCards = await buildWardrobeCardsAi(values, controller.signal);
+      if (run !== state.outfitRun) return;
+
+      state.outfits = { v: 1, source: "wardrobe", cards: aiCards };
+      persistOutfits();
+      renderOutfitWho();
+      clearStatus(el.outfitStatus);
+      renderOutfitCards();
+      renderOutfitSource();
+      el.outfitNote.textContent =
+        "Комплекты собраны только из ваших вещей — их подобрала модель. Если что-то не подошло, нажмите «Не нравится».";
+      el.outfitNote.hidden = false;
+      renderOutfitActions("ready");
+      return;
+    } catch (error) {
+      if (run !== state.outfitRun) return;
+      if (error && error.name === "AbortError") return;
+      console.error(error);
+      aiFailed = true;
+    } finally {
+      state.outfitAbort = null;
+    }
+  }
+
+  state.outfits = { v: 1, source: "wardrobe", cards };
+  persistOutfits();
+  renderOutfitWho();
+  clearStatus(el.outfitStatus);
+  renderOutfitCards();
+  renderOutfitSource();
+  el.outfitNote.textContent =
+    "Комплекты собраны только из ваших вещей. Если что-то не подошло, нажмите «Не нравится».";
+  el.outfitNote.hidden = false;
+  renderOutfitActions("ready");
+
+  if (aiFailed) setOutfitStatus("ok", "Модель не ответила — собрали по правилам.");
+}
 
 // ── настройки и ИИ ──────────────────────────────────────────
 
@@ -1939,6 +2526,11 @@ function generateOutfits(values, gender, round = 0) {
 function replaceOutfit(index) {
   if (state.replacing) return;
 
+  if (state.outfits && state.outfits.source === "wardrobe") {
+    replaceWardrobe(index);
+    return;
+  }
+
   const cards = state.outfits.cards;
   const current = cards[index];
   const occasion = OCCASIONS.find((item) => item.key === current.occasion) || OCCASIONS[index];
@@ -2021,7 +2613,13 @@ const OUTFIT_WHO = {
 };
 
 function renderOutfitWho() {
-  el.outfitWho.textContent = OUTFIT_WHO[state.profile.gender] || OUTFIT_WHO[""];
+  const fromWardrobe = Boolean(state.outfits && state.outfits.source === "wardrobe");
+  el.outfitWho.textContent = fromWardrobe
+    ? "Из вашего гардероба"
+    : OUTFIT_WHO[state.profile.gender] || OUTFIT_WHO[""];
+  el.titleOutfits.innerHTML = fromWardrobe
+    ? "Образы из<br>ваших вещей"
+    : "Четыре образа<br>под ваш разбор";
 }
 
 function setOutfitStatus(kind, text) {
@@ -2034,6 +2632,10 @@ function setOutfitStatus(kind, text) {
 function renderOutfitSource() {
   if (!state.outfits) {
     el.outfitSource.textContent = "";
+    return;
+  }
+  if (state.outfits.source === "wardrobe") {
+    el.outfitSource.textContent = "Собрано из ваших вещей";
     return;
   }
   if (state.outfits.source === "ai") {
@@ -2075,9 +2677,21 @@ function buildOutfitCard(outfit, index) {
   title.className = "outfit__title";
   title.textContent = outfit.title;
 
+  if (outfit.photos && outfit.photos.length) {
+    const photos = document.createElement("div");
+    photos.className = "outfit__photos";
+    for (const src of outfit.photos) {
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      img.loading = "lazy";
+      photos.append(img);
+    }
+    card.append(photos);
+  }
+
   const items = document.createElement("dl");
-  items.className = "outfit__items";
-  for (const [name, value] of outfit.items) {
+  items.className = "outfit__items";  for (const [name, value] of outfit.items) {
     const row = document.createElement("div");
     row.className = "outfit__row";
     const term = document.createElement("dt");
@@ -2091,8 +2705,7 @@ function buildOutfitCard(outfit, index) {
   }
 
   const colors = document.createElement("div");
-  colors.className = "outfit__colors";
-  const colorLabel = document.createElement("span");
+  colors.className = "outfit__colors";  const colorLabel = document.createElement("span");
   colorLabel.className = "outfit__term";
   colorLabel.textContent = "Цвета";
   const swatches = document.createElement("span");
@@ -2153,7 +2766,7 @@ function buildOutfitCard(outfit, index) {
   const buy = document.createElement("div");
   buy.className = "outfit__buy";
 
-  if (outfit.liked) {
+  if (outfit.liked && !outfit.fromWardrobe) {
     const buyBtn = document.createElement("button");
     buyBtn.type = "button";
     buyBtn.className = "btn btn--ghost outfit__buy-btn";
@@ -2378,6 +2991,17 @@ function renderOutfitActions(mode) {
     return;
   }
 
+  if (mode === "wardrobeMissing") {
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "btn btn--primary";
+    go.textContent = "Открыть гардероб";
+    go.addEventListener("click", openWardrobe);
+
+    el.outfitActions.append(go, back);
+    return;
+  }
+
   if (mode === "aiFailed") {
     const retry = document.createElement("button");
     retry.type = "button";
@@ -2426,6 +3050,10 @@ function renderOutfitActions(mode) {
     again.className = "linkbtn";
     again.textContent = "Подобрать все образы заново";
     again.addEventListener("click", () => {
+      if (state.outfits && state.outfits.source === "wardrobe") {
+        startWardrobeOutfits();
+        return;
+      }
       if (state.outfits && state.outfits.source === "ai" && hasAiKey()) {
         state.outfitBackup = state.outfits;
         state.outfits = null;
@@ -2687,20 +3315,23 @@ const SCREENS = {
   analysis: { node: () => el.screenAnalysis, step: "Шаг 2 из 3" },
   outfits: { node: () => el.screenOutfits, step: "Шаг 3 из 3" },
   settings: { node: () => el.screenSettings, step: "Настройки" },
+  wardrobe: { node: () => el.screenWardrobe, step: "Гардероб" },
 };
 
 function showScreen(name) {
   for (const key of Object.keys(SCREENS)) {
     SCREENS[key].node().hidden = key !== name;
   }
-  if (name !== "settings") state.lastScreen = name;
+  if (name !== "settings" && name !== "wardrobe") state.lastScreen = name;
   el.steps.textContent = SCREENS[name].step;
   el.settingsBtn.hidden = name === "settings";
+  el.wardrobeBtn.hidden = name === "wardrobe";
 
   if (name === "review") el.titleReview.focus({ preventScroll: true });
   if (name === "analysis") el.titleAnalysis.focus({ preventScroll: true });
   if (name === "outfits") el.titleOutfits.focus({ preventScroll: true });
   if (name === "settings") el.titleSettings.focus({ preventScroll: true });
+  if (name === "wardrobe") el.titleWardrobe.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -2806,6 +3437,9 @@ class AppError extends Error {}
 // ── запуск: если разбор уже сохранён, показываем его ────────
 
 (function boot() {
+  const savedWardrobe = loadWardrobe();
+  if (savedWardrobe) state.wardrobe = savedWardrobe;
+
   const savedSettings = loadSettings();
   if (savedSettings) {
     state.settings.key = String(savedSettings.key || "");

@@ -106,7 +106,7 @@ body {
 @media (max-width: 430px) {
   .topbar__right { gap: 10px; }
   .settings-btn { font-size: 12px; }
-  .steps { font-size: 10.5px; letter-spacing: .08em; }
+  .steps { display: none; }
 }
 
 /* ── общий каркас ────────────────────────────────────── */
@@ -819,6 +819,201 @@ h1 {
   font-size: 13px;
   line-height: 1.45;
   color: var(--ink-soft);
+}
+
+/* ── гардероб ────────────────────────────────────────── */
+
+.ward-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .55);
+  border: 1px solid var(--line);
+  margin-bottom: 18px;
+}
+
+.ward-card__title {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ward-photo {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  min-height: 150px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px dashed #cbb9a5;
+  background: #fffdfa;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.ward-photo img {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+}
+
+.ward-photo img[hidden] { display: none; }
+
+#wardType,
+#wardName {
+  width: 100%;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fffdfa;
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+#wardType:focus-visible,
+#wardName:focus-visible {
+  outline: 2px solid rgba(168, 85, 47, .4);
+  outline-offset: 2px;
+}
+
+.ward-photo__hint {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.ward-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.ward-custom input {
+  width: 38px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.chip--color {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.chip__dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, .15);
+}
+
+.ward-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.ward-item {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .6);
+  border: 1px solid var(--line);
+}
+
+.ward-item img,
+.ward-item__empty {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  background: #efe7db;
+}
+
+.ward-item__empty {
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  color: #a2968a;
+}
+
+.ward-item__body {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px 12px;
+}
+
+.ward-item__type {
+  margin: 0;
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.ward-item__name {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.3;
+}
+
+.ward-item__color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.ward-item__remove {
+  justify-self: start;
+  margin-top: 4px;
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ward-item__remove:hover { color: var(--bad); }
+
+.ward-empty {
+  margin: 0 0 18px;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.outfit__photos {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.outfit__photos img {
+  width: 74px;
+  height: 74px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid var(--line);
 }
 
 /* ── образы ──────────────────────────────────────────── */
