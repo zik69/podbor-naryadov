@@ -120,6 +120,12 @@ const el = {
   analysisCards: document.getElementById("analysisCards"),
   analysisNote: document.getElementById("analysisNote"),
   analysisActions: document.getElementById("analysisActions"),
+  screenOutfits: document.getElementById("screen-outfits"),
+  titleOutfits: document.getElementById("title-outfits"),
+  outfitStatus: document.getElementById("outfitStatus"),
+  outfitCards: document.getElementById("outfitCards"),
+  outfitNote: document.getElementById("outfitNote"),
+  outfitActions: document.getElementById("outfitActions"),
 };
 
 const state = {
@@ -129,6 +135,8 @@ const state = {
   canvas: null,
   manual: {},
   razbor: null,
+  outfits: null,
+  outfitRun: 0,
 };
 
 let detectorPromise = null;
@@ -723,9 +731,11 @@ async function openAnalysis() {
 
     state.razbor = { v: 1, values, manual: { ...state.manual } };
     persistRazbor();
+    clearOutfits();
 
     clearStatus(el.analysisStatus);
     renderCards();
+    renderAnalysisActions();
     el.analysisNote.textContent = Object.keys(state.manual).length
       ? "Часть пунктов вы поправили сами — дальше опираемся на ваш выбор."
       : "Это версия ассистента, а не приговор. Если не совпадает — поправьте.";
@@ -737,6 +747,7 @@ async function openAnalysis() {
 
     const empty = { shape: null, features: null, temperature: null, contrast: null };
     state.razbor = { v: 1, values: empty, manual: { ...state.manual }, failed: true };
+    clearOutfits();
     renderCards();
 
     el.analysisStatus.className = "status status--bad";
@@ -834,7 +845,10 @@ function buildCard(field) {
       state.razbor.failed = false;
       state.razbor.v = 1;
       persistRazbor();
+      // образы собраны по прежним значениям — их больше нельзя показывать
+      clearOutfits();
       renderCards();
+      renderAnalysisActions();
       el.analysisNote.textContent = "Часть пунктов вы поправили сами — дальше опираемся на ваш выбор.";
       el.analysisNote.hidden = false;
       const next = el.analysisCards.querySelector(`.rcard[data-key="${field.key}"] .rcard__edit`);
@@ -857,9 +871,22 @@ function buildCard(field) {
 function renderAnalysisActions() {
   el.analysisActions.replaceChildren();
 
+  const hasValues = Boolean(
+    state.razbor && RAZBOR_FIELDS.every((field) => state.razbor.values[field.key])
+  );
+
+  if (hasValues) {
+    const search = document.createElement("button");
+    search.type = "button";
+    search.className = "btn btn--primary";
+    search.textContent = state.outfits ? "Смотреть образы" : "Подобрать образы";
+    search.addEventListener("click", startOutfits);
+    el.analysisActions.append(search);
+  }
+
   const another = document.createElement("button");
   another.type = "button";
-  another.className = "btn btn--primary";
+  another.className = hasValues ? "btn btn--ghost" : "btn btn--primary";
   another.textContent = "Выбрать другое фото";
   another.addEventListener("click", reset);
 
@@ -873,12 +900,475 @@ function renderAnalysisActions() {
     clear.textContent = "Стереть разбор";
     clear.addEventListener("click", () => {
       clearRazbor();
+      clearOutfits();
       state.manual = {};
       state.razbor = null;
       reset();
     });
     el.analysisActions.append(clear);
   }
+}
+
+// ── образы под разбор ───────────────────────────────────────
+
+const OUTFITS_KEY = "naryady.obrazy.v1";
+
+// цвета подобраны по температуре: тёплые и холодные оттенки
+const PALETTES = {
+  "тёплые": [
+    { name: "песочный", hex: "#d9bd94" },
+    { name: "терракота", hex: "#c2684a" },
+    { name: "оливковый", hex: "#8b8b5a" },
+    { name: "горчичный", hex: "#c9a227" },
+    { name: "кирпичный", hex: "#a44a3f" },
+    { name: "тёплый беж", hex: "#ddcdb6" },
+    { name: "коралловый", hex: "#cf7a5e" },
+    { name: "шоколадный", hex: "#7a5641" },
+  ],
+  "холодные": [
+    { name: "серо-голубой", hex: "#7b93a8" },
+    { name: "изумрудный", hex: "#2f6f5e" },
+    { name: "винный", hex: "#7b2b3b" },
+    { name: "холодный серый", hex: "#9aa0a6" },
+    { name: "синий деним", hex: "#4a6b8a" },
+    { name: "сливовый", hex: "#5d4667" },
+    { name: "лавандовый", hex: "#8b86a8" },
+    { name: "стальной", hex: "#6f7c8a" },
+  ],
+};
+
+// верх подбираем под форму лица: вырез и линия плеч
+const SHAPE_TOPS = {
+  "овал": [
+    "рубашка с обычным воротником",
+    "футболка с круглым вырезом",
+    "джемпер с мягким воротом",
+    "лонгслив с вырезом-лодочкой",
+  ],
+  "круг": [
+    "рубашка, расстёгнутая на две верхние пуговицы",
+    "футболка с вырезом уголком",
+    "лонгслив с V-вырезом",
+    "кардиган нараспашку поверх простого топа",
+  ],
+  "квадрат": [
+    "рубашка с мягким воротником",
+    "джемпер с округлым вырезом",
+    "лонгслив с вырезом-лодочкой",
+    "худи с мягким капюшоном",
+  ],
+  "сердце": [
+    "лонгслив с открытыми плечами",
+    "рубашка с широким воротом",
+    "футболка с вырезом-лодочкой",
+    "свитер с объёмным воротом",
+  ],
+  "треугольник": [
+    "джемпер с объёмным воротом",
+    "рубашка с широкими плечами",
+    "худи с капюшоном вокруг шеи",
+    "рубашка в крупную клетку",
+  ],
+  "вытянутое": [
+    "футболка с широким круглым вырезом",
+    "рубашка с горизонтальной полосой",
+    "лонгслив с вырезом-лодочкой",
+    "джемпер с широкой полосой у груди",
+  ],
+};
+
+// низ подбираем под черты: мягкие линии или чёткие
+const FEATURES_BOTTOMS = {
+  "мягкие": [
+    "прямые брюки или юбка-миди",
+    "мягкие брюки на резинке",
+    "джинсы прямого кроя",
+    "прямые брюки из мягкой ткани",
+  ],
+  "резкие": [
+    "брюки со стрелкой или юбка-карандаш",
+    "джинсы с чёткой линией",
+    "широкие брюки с чёткой складкой",
+    "кожаные брюки прямого кроя",
+  ],
+};
+
+const OCCASIONS = [
+  {
+    key: "work",
+    label: "на работу",
+    title: "Спокойный образ на работу",
+    shoes: ["лоферы", "туфли на небольшом каблуке", "чистые белые кроссовки"],
+    outer: ["пиджак прямого кроя", "кардиган ниже бедра", "тренч"],
+  },
+  {
+    key: "walk",
+    label: "на прогулку",
+    title: "Свободный образ на прогулку",
+    shoes: ["кеды", "ботинки на плоской подошве", "кроссовки"],
+    outer: ["джинсовая куртка", "куртка-бомбер", "тренч"],
+  },
+  {
+    key: "date",
+    label: "на свидание",
+    title: "Собранный образ на свидание",
+    shoes: ["туфли на небольшом каблуке", "лоферы", "аккуратные ботинки"],
+    outer: ["пиджак мягкой посадки", "кардиган", "пальто прямого кроя"],
+  },
+  {
+    key: "cafe",
+    label: "в кафе с друзьями",
+    title: "Лёгкий образ в кафе с друзьями",
+    shoes: ["кроссовки", "кеды", "лоферы"],
+    outer: ["джинсовая куртка", "кардиган", "куртка-бомбер"],
+  },
+];
+
+const SHAPE_WHY = {
+  "овал": "Овал: подходит почти любой вырез — выбрали удобный для случая.",
+  "круг": "Круг: вырез уголком и вертикальные линии дают лицу больше длины.",
+  "квадрат": "Квадрат: мягкая линия у шеи сглаживает углы и не спорит с чёткой челюстью.",
+  "сердце": "Сердце: объём и детали ниже лица уравновешивают широкий лоб.",
+  "треугольник": "Треугольник: объём сверху и открытая шея переносят внимание выше.",
+  "вытянутое": "Вытянутое: широкий вырез и горизонтальные линии добавляют лицу ширины.",
+};
+
+const FEATURES_WHY = {
+  "мягкие": "Мягкие черты: мягкий трикотаж и спокойные линии — в тон внешности.",
+  "резкие": "Резкие черты: плотные ткани и чёткие линии — в тон внешности.",
+};
+
+const TEMPERATURE_WHY = {
+  "тёплые": "Тёплые оттенки: песочный, терракота и олива рядом с лицом выглядят естественно.",
+  "холодные": "Холодные оттенки: серо-голубой, изумруд и вино рядом с лицом выглядят естественно.",
+};
+
+const CONTRAST_WHY = {
+  "высокий": "Можно соединять светлый верх и тёмный низ.",
+  "спокойный": "Мягкие переходы в одной гамме смотрятся цельно.",
+};
+
+function buildOutfit(occasion, values, index, variant) {
+  const shape = SHAPE_TOPS[values.shape] ? values.shape : "овал";
+  const features = FEATURES_BOTTOMS[values.features] ? values.features : "мягкие";
+  const temperature = PALETTES[values.temperature] ? values.temperature : "тёплые";
+  const contrast = CONTRAST_WHY[values.contrast] ? values.contrast : "спокойный";
+
+  const tops = SHAPE_TOPS[shape];
+  const bottoms = FEATURES_BOTTOMS[features];
+  const palette = PALETTES[temperature];
+
+  const top = tops[(index + variant) % tops.length];
+  const bottom = bottoms[(index + variant + 1) % bottoms.length];
+  const shoes = occasion.shoes[(index + variant) % occasion.shoes.length];
+  const outer = occasion.outer[(index + variant + 1) % occasion.outer.length];
+  const colors = [
+    palette[(index * 2 + variant) % palette.length],
+    palette[(index * 2 + 1 + variant) % palette.length],
+  ];
+
+  // пункты чередуем, чтобы карточки не выглядели копией друг друга
+  const colorsWhy =
+    index % 2
+      ? `${CONTRAST_WHY[contrast]} ${TEMPERATURE_WHY[temperature]}`
+      : `${TEMPERATURE_WHY[temperature]} ${CONTRAST_WHY[contrast]}`;
+  const first = index % 2 ? FEATURES_WHY[features] : SHAPE_WHY[shape];
+  const second = index % 2 ? SHAPE_WHY[shape] : FEATURES_WHY[features];
+
+  return {
+    occasion: occasion.key,
+    label: occasion.label,
+    title: occasion.title,
+    items: [
+      ["Верх", top],
+      ["Низ", bottom],
+      ["Обувь", shoes],
+      ["Верхний слой", outer],
+    ],
+    colors,
+    why: [
+      first,
+      second,
+      colorsWhy,
+    ],
+    variant,
+    liked: false,
+  };
+}
+
+function outfitSignature(outfit) {
+  return [
+    outfit.title,
+    ...outfit.items.map((item) => item[1]),
+    outfit.colors.map((color) => color.name).join("/"),
+  ].join("|");
+}
+
+function generateOutfits(values, round = 0) {
+  return OCCASIONS.map((occasion, index) => buildOutfit(occasion, values, index, round));
+}
+
+function replaceOutfit(index) {
+  const cards = state.outfits.cards;
+  const current = cards[index];
+  const occasion = OCCASIONS.find((item) => item.key === current.occasion) || OCCASIONS[index];
+  const base = OCCASIONS.indexOf(occasion);
+  const previous = outfitSignature(current);
+  let variant = (current.variant || 0) + 1;
+  let next = buildOutfit(occasion, state.razbor.values, base, variant);
+
+  // новый образ не должен повторять ни старый, ни соседние карточки
+  for (let step = 0; step < 12; step += 1) {
+    const same = outfitSignature(next) === previous || cards.some(
+      (card, cardIndex) => cardIndex !== index && outfitSignature(card) === outfitSignature(next)
+    );
+    if (!same) break;
+    variant += 1;
+    next = buildOutfit(occasion, state.razbor.values, base, variant);
+  }
+
+  cards[index] = next;
+  persistOutfits();
+  renderOutfitCards();
+  setOutfitStatus("ok", "Заменили на другой образ.");
+
+  const focus = el.outfitCards.children[index]?.querySelector(".outfit__like");
+  if (focus) focus.focus();
+}
+
+function setOutfitStatus(kind, text) {
+  el.outfitStatus.className = `status status--${kind}`;
+  el.outfitStatus.replaceChildren();
+  if (kind === "wait") el.outfitStatus.append(spinner());
+  el.outfitStatus.append(document.createTextNode(text));
+}
+
+function renderOutfitCards() {
+  el.outfitCards.replaceChildren();
+  if (!state.outfits) return;
+  state.outfits.cards.forEach((outfit, index) => {
+    el.outfitCards.append(buildOutfitCard(outfit, index));
+  });
+}
+
+function buildOutfitCard(outfit, index) {
+  const card = document.createElement("section");
+  card.className = "outfit";
+  if (outfit.liked) card.classList.add("is-liked");
+
+  const head = document.createElement("div");
+  head.className = "outfit__head";
+
+  const label = document.createElement("span");
+  label.className = "outfit__label";
+  label.textContent = outfit.label;
+
+  const likedBadge = document.createElement("span");
+  likedBadge.className = "outfit__liked";
+  likedBadge.textContent = "♥ нравится";
+  likedBadge.hidden = !outfit.liked;
+
+  head.append(label, likedBadge);
+
+  const title = document.createElement("h2");
+  title.className = "outfit__title";
+  title.textContent = outfit.title;
+
+  const items = document.createElement("dl");
+  items.className = "outfit__items";
+  for (const [name, value] of outfit.items) {
+    const row = document.createElement("div");
+    row.className = "outfit__row";
+    const term = document.createElement("dt");
+    term.className = "outfit__term";
+    term.textContent = name;
+    const detail = document.createElement("dd");
+    detail.className = "outfit__detail";
+    detail.textContent = value;
+    row.append(term, detail);
+    items.append(row);
+  }
+
+  const colors = document.createElement("div");
+  colors.className = "outfit__colors";
+  const colorLabel = document.createElement("span");
+  colorLabel.className = "outfit__term";
+  colorLabel.textContent = "Цвета";
+  const swatches = document.createElement("span");
+  swatches.className = "swatches";
+  for (const color of outfit.colors) {
+    const swatch = document.createElement("span");
+    swatch.className = "swatch";
+    swatch.style.background = color.hex;
+    swatch.setAttribute("aria-hidden", "true");
+    const name = document.createElement("span");
+    name.className = "swatch__name";
+    name.textContent = color.name;
+    swatches.append(swatch, name);
+  }
+  colors.append(colorLabel, swatches);
+
+  const whyTitle = document.createElement("h3");
+  whyTitle.className = "outfit__subtitle";
+  whyTitle.textContent = "Почему подходит";
+
+  const why = document.createElement("ul");
+  why.className = "outfit__why";
+  for (const reason of outfit.why) {
+    const item = document.createElement("li");
+    item.textContent = reason;
+    why.append(item);
+  }
+
+  const buttons = document.createElement("div");
+  buttons.className = "outfit__buttons";
+
+  const like = document.createElement("button");
+  like.type = "button";
+  like.className = "chip chip--like outfit__like";
+  like.textContent = outfit.liked ? "♥ Нравится" : "Нравится";
+  like.setAttribute("aria-pressed", String(outfit.liked));
+  like.setAttribute("aria-label", `Отметить образ «${outfit.title}»`);
+  like.addEventListener("click", () => {
+    outfit.liked = !outfit.liked;
+    persistOutfits();
+    renderOutfitCards();
+    setOutfitStatus(
+      "ok",
+      outfit.liked ? "Отметили образ — он сохранится." : "Сняли отметку с образа."
+    );
+    el.outfitCards.children[index]?.querySelector(".outfit__like")?.focus();
+  });
+
+  const dislike = document.createElement("button");
+  dislike.type = "button";
+  dislike.className = "chip";
+  dislike.textContent = "Не нравится";
+  dislike.setAttribute("aria-label", `Заменить образ «${outfit.title}»`);
+  dislike.addEventListener("click", () => replaceOutfit(index));
+
+  buttons.append(like, dislike);
+  card.append(head, title, items, colors, whyTitle, why, buttons);
+  return card;
+}
+
+function renderOutfitActions(mode) {
+  el.outfitActions.replaceChildren();
+
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "btn btn--ghost";
+  back.textContent = "Назад к разбору";
+  back.addEventListener("click", () => {
+    state.outfitRun += 1;
+    showScreen("analysis");
+    renderAnalysisActions();
+  });
+
+  if (mode === "loading") {
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "btn btn--ghost";
+    cancel.textContent = "Отменить";
+    cancel.addEventListener("click", () => {
+      state.outfitRun += 1;
+      showScreen("analysis");
+      renderAnalysisActions();
+    });
+    el.outfitActions.append(cancel);
+    return;
+  }
+
+  if (mode === "retry") {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn btn--primary";
+    retry.textContent = "Попробовать снова";
+    retry.addEventListener("click", startOutfits);
+    el.outfitActions.append(retry, back);
+    return;
+  }
+
+  if (mode === "missing") {
+    const fix = document.createElement("button");
+    fix.type = "button";
+    fix.className = "btn btn--primary";
+    fix.textContent = "Вернуться к разбору";
+    fix.addEventListener("click", () => {
+      showScreen("analysis");
+      renderAnalysisActions();
+    });
+    el.outfitActions.append(fix);
+    return;
+  }
+
+  el.outfitActions.append(back);
+
+  if (state.outfits) {
+    const again = document.createElement("button");
+    again.type = "button";
+    again.className = "linkbtn";
+    again.textContent = "Подобрать все образы заново";
+    again.addEventListener("click", () => {
+      const round = (state.outfitRound || 0) + 1;
+      state.outfitRound = round;
+      state.outfits = { v: 1, cards: generateOutfits(state.razbor.values, round) };
+      persistOutfits();
+      renderOutfitCards();
+      setOutfitStatus("ok", "Собрали новый набор.");
+    });
+    el.outfitActions.append(again);
+  }
+}
+
+async function startOutfits() {
+  showScreen("outfits");
+  el.outfitCards.replaceChildren();
+
+  if (!state.outfits) {
+    el.outfitNote.hidden = true;
+    setOutfitStatus("wait", "Подбираем образы под ваш разбор…");
+    renderOutfitActions("loading");
+
+    const run = ++state.outfitRun;
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    if (run !== state.outfitRun) return;
+
+    try {
+      const values = state.razbor?.values || {};
+      const missing = RAZBOR_FIELDS.filter((field) => !values[field.key]);
+      if (missing.length) {
+        setOutfitStatus("bad", "В разборе не хватает значений — без них образы не собрать.");
+        el.outfitNote.textContent =
+          "Вернитесь к разбору и выберите значения вручную. Это пара нажатий.";
+        el.outfitNote.hidden = false;
+        renderOutfitActions("missing");
+        return;
+      }
+
+      state.outfitRound = 0;
+      state.outfits = { v: 1, cards: generateOutfits(values) };
+      persistOutfits();
+      clearStatus(el.outfitStatus);
+      renderOutfitCards();
+      el.outfitNote.textContent =
+        "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
+      el.outfitNote.hidden = false;
+      renderOutfitActions("ready");
+    } catch (error) {
+      if (run !== state.outfitRun) return;
+      console.error(error);
+      setOutfitStatus("bad", "Не получилось подобрать образы. Попробуйте ещё раз — это быстро.");
+      renderOutfitActions("retry");
+    }
+    return;
+  }
+
+  clearStatus(el.outfitStatus);
+  renderOutfitCards();
+  el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
+  el.outfitNote.hidden = false;
+  renderOutfitActions("ready");
 }
 
 // ── сохранение разбора ──────────────────────────────────────
@@ -907,6 +1397,37 @@ function loadRazbor() {
 function clearRazbor() {
   try {
     localStorage.removeItem(RAZBOR_KEY);
+  } catch {
+    // ничего страшного
+  }
+}
+
+function persistOutfits() {
+  if (!state.outfits) return;
+  try {
+    localStorage.setItem(OUTFITS_KEY, JSON.stringify(state.outfits));
+  } catch {
+    // хранилище может быть выключено — тогда просто не запоминаем
+  }
+}
+
+function loadOutfits() {
+  try {
+    const raw = localStorage.getItem(OUTFITS_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1 || !Array.isArray(data.cards) || !data.cards.length) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function clearOutfits() {
+  state.outfits = null;
+  state.outfitRound = 0;
+  try {
+    localStorage.removeItem(OUTFITS_KEY);
   } catch {
     // ничего страшного
   }
@@ -961,6 +1482,9 @@ function reset() {
   el.analysisCards.replaceChildren();
   el.analysisPhoto.replaceChildren();
   el.analysisActions.replaceChildren();
+  el.outfitCards.replaceChildren();
+  el.outfitActions.replaceChildren();
+  clearStatus(el.outfitStatus);
   clearStatus(el.analysisStatus);
   showScreen("start");
 }
@@ -971,6 +1495,7 @@ const SCREENS = {
   start: { node: () => el.screenStart, step: "Шаг 1 из 3" },
   review: { node: () => el.screenReview, step: "Шаг 1 из 3" },
   analysis: { node: () => el.screenAnalysis, step: "Шаг 2 из 3" },
+  outfits: { node: () => el.screenOutfits, step: "Шаг 3 из 3" },
 };
 
 function showScreen(name) {
@@ -981,6 +1506,7 @@ function showScreen(name) {
 
   if (name === "review") el.titleReview.focus({ preventScroll: true });
   if (name === "analysis") el.titleAnalysis.focus({ preventScroll: true });
+  if (name === "outfits") el.titleOutfits.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -1090,11 +1616,16 @@ class AppError extends Error {}
   if (saved && !(saved.failed && !Object.keys(saved.manual || {}).length)) {
     state.razbor = saved;
     state.manual = { ...(saved.manual || {}) };
+
+    const savedOutfits = loadOutfits();
+    if (savedOutfits) state.outfits = savedOutfits;
+
     showScreen("analysis");
     renderCards();
     el.analysisPhoto.replaceChildren(photoPreview());
-    el.analysisNote.textContent =
-      "Разбор сохранён на этом устройстве. Фото мы не храним — загрузите новое, чтобы обновить черты.";
+    el.analysisNote.textContent = state.outfits
+      ? "Разбор и образы сохранены на этом устройстве. Фото мы не храним — загрузите новое, чтобы обновить черты."
+      : "Разбор сохранён на этом устройстве. Фото мы не храним — загрузите новое, чтобы обновить черты.";
     el.analysisNote.hidden = false;
     renderAnalysisActions();
     return;

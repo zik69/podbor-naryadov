@@ -84,7 +84,7 @@ body {
 
 /* ── общий каркас ────────────────────────────────────── */
 
-.main { flex: 1; }
+.main { flex: 1; container-type: inline-size; }
 
 .screen { animation: rise .35s ease both; }
 
@@ -593,6 +593,164 @@ h1 {
 }
 
 .linkbtn:hover { color: var(--bad); }
+
+/* ── образы ──────────────────────────────────────────── */
+
+.outfit-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+/* на широком экране образов делаем две колонки и больше места */
+@media (min-width: 900px) {
+  .app:has(#screen-outfits:not([hidden])) {
+    max-width: 980px;
+  }
+}
+
+@container (min-width: 820px) {
+  .outfit-grid { grid-template-columns: 1fr 1fr; }
+}
+
+.outfit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 18px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .55);
+  border: 1px solid var(--line);
+  transition: background-color .2s ease, border-color .2s ease;
+}
+
+.outfit.is-liked {
+  border-color: rgba(168, 85, 47, .45);
+  background: rgba(255, 250, 244, .9);
+}
+
+.outfit__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.outfit__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.outfit__liked {
+  padding: 3px 9px 2px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.outfit__liked[hidden] { display: none; }
+
+.outfit__title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 21px;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -.01em;
+}
+
+.outfit__items {
+  margin: 2px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.outfit__row {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.outfit__term {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.outfit__detail {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.4;
+}
+
+.outfit__colors {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.swatches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, .12);
+}
+
+.swatch__name {
+  font-size: 13.5px;
+  color: var(--ink-soft);
+}
+
+.outfit__subtitle {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.outfit__why {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 5px;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.outfit__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.outfit__like[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 
 /* ── подвал ──────────────────────────────────────────── */
 
