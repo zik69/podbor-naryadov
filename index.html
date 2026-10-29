@@ -68,6 +68,10 @@
           Фото остаётся на вашем устройстве. Мы не отправляем его на сервер
           и не показываем никому.
         </p>
+
+        <button class="linkbtn linkbtn--start" id="figureFromStart" type="button">
+          Уже есть фото в полный рост? Разобрать фигуру
+        </button>
       </section>
 
       <section class="screen" id="screen-review" aria-labelledby="title-review" hidden>
@@ -143,6 +147,37 @@
         </p>
 
         <div class="actions" id="outfitActions"></div>
+      </section>
+
+      <section class="screen" id="screen-figure" aria-labelledby="title-figure" hidden>
+        <p class="eyebrow">фигура</p>
+        <h1 id="title-figure" tabindex="-1">Разбор в полный рост</h1>
+        <p class="lead">
+          Покажет пропорции простыми словами — без оценок. Нужно фото, где вы
+          стоите прямо и видны ноги.
+        </p>
+
+        <div class="dropzone dropzone--small" id="figureDrop">
+          <div class="dropzone__art" aria-hidden="true">
+            <svg viewBox="0 0 120 120" role="presentation">
+              <circle cx="60" cy="30" r="12" fill="none" stroke="currentColor" stroke-width="2.5"/>
+              <path d="M60 42v30M60 50l-18 10M60 50l18 10M60 72l-12 26M60 72l12 26" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <button class="btn btn--primary" id="figurePick" type="button">Добавить фото в полный рост</button>
+          <p class="hint">Видно голову и ступни, человек стоит прямо. Только вы в кадре.</p>
+        </div>
+
+        <div class="status" id="figureStatus" role="status" aria-live="polite"></div>
+
+        <div class="review-grid" id="figureGrid" hidden>
+          <div class="analysis-photo" id="figurePhoto"></div>
+          <div class="analysis-cards" id="figureCards"></div>
+        </div>
+
+        <p class="analysis-note" id="figureNote" hidden></p>
+
+        <div class="actions" id="figureActions"></div>
       </section>
 
       <section class="screen" id="screen-wardrobe" aria-labelledby="title-wardrobe" hidden>
@@ -263,6 +298,7 @@
 
   <input type="file" id="fileInput" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden>
   <input type="file" id="cameraInput" accept="image/*" capture="user" hidden>
+  <input type="file" id="figureFile" accept="image/jpeg,image/png,image/webp" hidden>
 
   <script defer src="app.js"></script>
 </body>

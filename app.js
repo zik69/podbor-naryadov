@@ -25,6 +25,49 @@ const RAZBOR_KEY = "naryady.razbor.v1";
 const PROFILE_KEY = "naryady.profil.v1";
 const SETTINGS_KEY = "naryady.nastroyki.v1";
 const WARDROBE_KEY = "naryady.garderob.v1";
+const FIGURE_KEY = "naryady.figure.v1";
+
+const POSE_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+
+const FIGURE_FIELDS = [
+  {
+    key: "shoulders",
+    title: "Плечи и бёдра",
+    options: [
+      {
+        value: "плечи шире бёдер",
+        note: "Сверху объёма больше — низ держим спокойным: прямые брюки, без лишних деталей.",
+      },
+      {
+        value: "равны",
+        note: "Плечи и бёдра примерно равны — подходит почти любой силуэт.",
+      },
+      {
+        value: "бёдра шире плеч",
+        note: "Баланс дают объём сверху и открытая шея: мягкие плечи, вырез лодочкой.",
+      },
+    ],
+  },
+  {
+    key: "legs",
+    title: "Ноги и корпус",
+    options: [
+      {
+        value: "ноги длиннее корпуса",
+        note: "Можно носить длинный верх — ноги не «съедаются».",
+      },
+      {
+        value: "примерно равны",
+        note: "Пропорции спокойные: идут и длинный верх, и укороченный.",
+      },
+      {
+        value: "корпус длиннее ног",
+        note: "Помогают вертикали: заправленный верх, обувь в цвет брюк, высокая посадка.",
+      },
+    ],
+  },
+];
 
 const WARDROBE_COLORS = [
   { name: "белый", hex: "#f2efe9" },
@@ -192,6 +235,18 @@ const el = {
   deleteKey: document.getElementById("deleteKey"),
   backFromSettings: document.getElementById("backFromSettings"),
   wardrobeBtn: document.getElementById("wardrobeBtn"),
+  figureFromStart: document.getElementById("figureFromStart"),
+  screenFigure: document.getElementById("screen-figure"),
+  titleFigure: document.getElementById("title-figure"),
+  figurePick: document.getElementById("figurePick"),
+  figureDrop: document.getElementById("figureDrop"),
+  figureFile: document.getElementById("figureFile"),
+  figureStatus: document.getElementById("figureStatus"),
+  figureGrid: document.getElementById("figureGrid"),
+  figurePhoto: document.getElementById("figurePhoto"),
+  figureCards: document.getElementById("figureCards"),
+  figureNote: document.getElementById("figureNote"),
+  figureActions: document.getElementById("figureActions"),
   screenWardrobe: document.getElementById("screen-wardrobe"),
   titleWardrobe: document.getElementById("title-wardrobe"),
   wardPhotoBox: document.getElementById("wardPhotoBox"),
@@ -229,6 +284,9 @@ const state = {
   searchCache: {},
   wardrobe: { v: 1, items: [] },
   ward: { photo: "", color: WARDROBE_COLORS[4] },
+  figure: { v: 1, values: { shoulders: null, legs: null }, manual: {} },
+  figurePreview: null,
+  figureBusy: false,
 };
 
 let detectorPromise = null;
@@ -996,6 +1054,15 @@ function renderAnalysisActions() {
     el.analysisActions.append(mine);
   }
 
+  const figure = document.createElement("button");
+  figure.type = "button";
+  figure.className = "btn btn--ghost";
+  figure.textContent = state.figure.values.shoulders
+    ? "Фигура: изменить разбор"
+    : "Разбор в полный рост";
+  figure.addEventListener("click", openFigure);
+  el.analysisActions.append(figure);
+
   const stored = Boolean(loadRazbor());
   if (stored) {
     const clear = document.createElement("button");
@@ -1098,6 +1165,399 @@ el.complimentBack.addEventListener("click", () => {
   renderCompliment();
   el.complimentHide.focus();
 });
+
+// ── разбор в полный рост ────────────────────────────────────
+
+function loadFigure() {
+  try {
+    const raw = localStorage.getItem(FIGURE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1 || !data.values) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function persistFigure() {
+  try {
+    localStorage.setItem(FIGURE_KEY, JSON.stringify(state.figure));
+  } catch {
+    // хранилище может быть выключено
+  }
+}
+
+function clearFigure() {
+  try {
+    localStorage.removeItem(FIGURE_KEY);
+  } catch {
+    // ничего страшного
+  }
+}
+
+function setFigureStatus(kind, text) {
+  el.figureStatus.className = `status status--${kind}`;
+  el.figureStatus.replaceChildren();
+  if (kind === "wait") el.figureStatus.append(spinner());
+  el.figureStatus.append(document.createTextNode(text));
+}
+
+let posePromise = null;
+
+async function getPoseLandmarker() {
+  if (!posePromise) {
+    posePromise = createPoseLandmarker().catch((error) => {
+      posePromise = null;
+      throw error;
+    });
+  }
+  return posePromise;
+}
+
+async function createPoseLandmarker() {
+  const module = await import(MEDIAPIPE_MODULE);
+  const fileset = await module.FilesetResolver.forVisionTasks(MEDIAPIPE_WASM);
+
+  const options = (delegate) => ({
+    baseOptions: { modelAssetPath: POSE_MODEL, delegate },
+    runningMode: "IMAGE",
+    numPoses: 2,
+  });
+
+  try {
+    return await module.PoseLandmarker.createFromOptions(fileset, options("GPU"));
+  } catch {
+    return await module.PoseLandmarker.createFromOptions(fileset, options("CPU"));
+  }
+}
+
+function analyzePose(poses, canvas) {
+  if (!poses.length) {
+    return { error: "Человека не видно. Нужно фото в полный рост, где вы стоите прямо." };
+  }
+  if (poses.length > 1) {
+    return { error: "На фото несколько человек. Нужно фото, где только вы." };
+  }
+
+  const landmarks = poses[0];
+  const width = canvas.width;
+  const height = canvas.height;
+  const point = (index) => ({
+    x: landmarks[index].x * width,
+    y: landmarks[index].y * height,
+    visible: landmarks[index].visibility == null ? 1 : landmarks[index].visibility,
+  });
+
+  const head = point(0);
+  const shoulders = [point(11), point(12)];
+  const hips = [point(23), point(24)];
+  const ankles = [point(27), point(28)];
+
+  const weak = [head, ...shoulders, ...hips, ...ankles].some((item) => item.visible < 0.35);
+  if (weak) {
+    return {
+      error:
+        "Не видно головы, плеч или ступней. Нужно фото целиком: от головы до обуви, стоя прямо.",
+    };
+  }
+
+  const shoulderWidth = distance(shoulders[0], shoulders[1]);
+  const hipWidth = distance(hips[0], hips[1]);
+  const shoulderHip = shoulderWidth / (hipWidth || 1);
+
+  const shoulderY = (shoulders[0].y + shoulders[1].y) / 2;
+  const hipY = (hips[0].y + hips[1].y) / 2;
+  const ankleY = (ankles[0].y + ankles[1].y) / 2;
+
+  const torso = hipY - shoulderY;
+  const legs = ankleY - hipY;
+  const legRatio = legs / (torso || 1);
+
+  let shouldersValue = "равны";
+  if (shoulderHip >= 1.85) shouldersValue = "плечи шире бёдер";
+  else if (shoulderHip <= 1.55) shouldersValue = "бёдра шире плеч";
+
+  let legsValue = "примерно равны";
+  if (legRatio >= 1.5) legsValue = "ноги длиннее корпуса";
+  else if (legRatio <= 1.28) legsValue = "корпус длиннее ног";
+
+  return {
+    values: { shoulders: shouldersValue, legs: legsValue },
+    metrics: {
+      shoulderHip: Number(shoulderHip.toFixed(3)),
+      legRatio: Number(legRatio.toFixed(3)),
+    },
+  };
+}
+
+function buildFigureCard(field) {
+  const value = state.figure.values[field.key];
+  const manual = Boolean(state.figure.manual[field.key]);
+  const option = field.options.find((item) => item.value === value) || null;
+
+  const card = document.createElement("section");
+  card.className = "rcard";
+  card.dataset.key = field.key;
+
+  const head = document.createElement("div");
+  head.className = "rcard__head";
+
+  const title = document.createElement("h2");
+  title.className = "rcard__title";
+  title.textContent = field.title;
+
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.className = "rcard__edit";
+  edit.textContent = "Поправить";
+  edit.setAttribute("aria-expanded", "false");
+
+  head.append(title, edit);
+
+  const valueLine = document.createElement("p");
+  valueLine.className = "rcard__value";
+  valueLine.textContent = option ? capitalize(option.value) : "Не определено";
+
+  if (manual) {
+    const badge = document.createElement("span");
+    badge.className = "rcard__badge";
+    badge.textContent = "ваша правка";
+    valueLine.append(badge);
+  }
+
+  const note = document.createElement("p");
+  note.className = "rcard__note";
+  note.textContent = option ? option.note : "Выберите значение вручную.";
+
+  const options = document.createElement("div");
+  options.className = "rcard__options";
+  options.hidden = true;
+
+  for (const item of field.options) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.textContent = capitalize(item.value);
+    chip.setAttribute("aria-pressed", String(item.value === value));
+    chip.addEventListener("click", () => {
+      state.figure.values[field.key] = item.value;
+      state.figure.manual[field.key] = true;
+      persistFigure();
+      renderFigureCards();
+      el.figureNote.textContent =
+        "Часть пунктов вы поправили сами — образы будут опираться на ваш выбор.";
+      el.figureNote.hidden = false;
+      renderAnalysisActions();
+    });
+    options.append(chip);
+  }
+
+  edit.addEventListener("click", () => {
+    options.hidden = !options.hidden;
+    edit.setAttribute("aria-expanded", String(!options.hidden));
+    const checked = options.querySelector('[aria-pressed="true"]');
+    if (!options.hidden && checked) checked.focus();
+  });
+
+  card.append(head, valueLine, note, options);
+  return card;
+}
+
+function renderFigureCards() {
+  el.figureCards.replaceChildren();
+  for (const field of FIGURE_FIELDS) {
+    el.figureCards.append(buildFigureCard(field));
+  }
+}
+
+function renderFigureActions() {
+  el.figureActions.replaceChildren();
+
+  const another = document.createElement("button");
+  another.type = "button";
+  another.className = "btn btn--ghost";
+  another.textContent = "Другое фото";
+  another.addEventListener("click", () => {
+    el.figureFile.value = "";
+    el.figureFile.click();
+  });
+
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "linkbtn";
+  back.textContent = "Назад";
+  back.addEventListener("click", () => showScreen(state.lastScreen || "start"));
+
+  el.figureActions.append(another, back);
+}
+
+function openFigure() {
+  showScreen("figure");
+  renderFigureActions();
+  renderFigureCards();
+  setFigureStatus(
+    "ok",
+    state.figure.values.shoulders
+      ? "Разбор сохранён на этом устройстве."
+      : ""
+  );
+
+  if (state.figure.values.shoulders) {
+    el.figureGrid.hidden = false;
+    el.figureDrop.hidden = true;
+    el.figurePhoto.replaceChildren(figurePlaceholder());
+    el.figureNote.textContent =
+      "Фото мы не храним — только результат. Пункты можно поправить руками.";
+    el.figureNote.hidden = false;
+  } else {
+    el.figureGrid.hidden = true;
+    el.figureDrop.hidden = false;
+    el.figureNote.hidden = true;
+  }
+}
+
+function figurePlaceholder() {
+  const empty = document.createElement("div");
+  empty.className = "analysis-photo__empty";
+  const icon = document.createElement("span");
+  icon.className = "analysis-photo__lock";
+  icon.textContent = "🔒";
+  icon.setAttribute("aria-hidden", "true");
+  const text = document.createElement("p");
+  text.textContent = "Фото не храним. Разбор остался только на этом устройстве.";
+  empty.append(icon, text);
+  return empty;
+}
+
+function showFigurePhoto(blob) {
+  if (state.figurePreview) URL.revokeObjectURL(state.figurePreview);
+  const img = document.createElement("img");
+  state.figurePreview = URL.createObjectURL(blob);
+  img.src = state.figurePreview;
+  img.alt = "Фото в полный рост";
+  el.figurePhoto.replaceChildren(img);
+}
+
+async function analyzeFigureFile(file) {
+  if (!file) return;
+  if (state.figureBusy) return;
+  state.figureBusy = true;
+
+  try {
+    await analyzeFigureStep(file);
+  } finally {
+    state.figureBusy = false;
+  }
+}
+
+async function analyzeFigureStep(file) {
+  if (!/^image\//.test(file.type)) {
+    setFigureStatus("bad", "Это не похоже на фото. Подойдёт JPG или PNG.");
+    return;
+  }
+  if (file.size > MAX_BYTES) {
+    setFigureStatus("bad", "Фото слишком тяжёлое. Подойдёт файл до 25 МБ.");
+    return;
+  }
+  if (/hei[cf]/i.test(file.type) || /\.hei[cf]$/i.test(file.name || "")) {
+    setFigureStatus("bad", "Формат HEIC пока не открывается. Сохраните снимок как JPG.");
+    return;
+  }
+
+  setFigureStatus("wait", "Смотрим пропорции…");
+  el.figureGrid.hidden = false;
+  el.figureNote.hidden = true;
+
+  try {
+    const source = await decodeImage(file);
+    showFigurePhoto(file);
+
+    const canvas = drawSmall(source, 720);
+
+    // если в кадре несколько лиц — скорее всего, и людей несколько
+    try {
+      const faces = await detectFaces(canvas);
+      if (faces.length > 1) {
+        setFigureStatus("bad", "На фото несколько человек. Нужно фото, где только вы.");
+        el.figureCards.replaceChildren();
+        return;
+      }
+    } catch {
+      // детектор лиц мог не загрузиться — проверим хотя бы позы
+    }
+
+    const landmarker = await getPoseLandmarker();
+    const result = landmarker.detect(canvas);
+    const analysis = analyzePose(result.landmarks || [], canvas);
+
+    if (analysis.error) {
+      setFigureStatus("bad", analysis.error);
+      el.figureCards.replaceChildren();
+      return;
+    }
+
+    if (location.search.includes("debug")) {
+      console.info("figure", JSON.stringify(analysis));
+    }
+
+    const values = { ...analysis.values };
+    for (const field of FIGURE_FIELDS) {
+      if (state.figure.manual[field.key] && state.figure.values[field.key]) {
+        values[field.key] = state.figure.values[field.key];
+      }
+    }
+
+    state.figure = { v: 1, values, manual: { ...state.figure.manual } };
+    persistFigure();
+    renderFigureCards();
+    el.figureDrop.hidden = true;
+
+    setFigureStatus("ok", "Готово. Проверьте, совпадает ли с тем, как вы себя видите.");
+    el.figureNote.textContent =
+      "Это приблизительная версия по одному фото. Если не совпадает — поправьте, дальше будем опираться на ваш выбор.";
+    el.figureNote.hidden = false;
+
+    if (state.razbor) renderAnalysisActions();
+    renderFigureActions();
+  } catch (error) {
+    console.error(error);
+    setFigureStatus(
+      "bad",
+      error instanceof AppError
+        ? error.message
+        : "Не получилось разобрать фото. Попробуйте другое."
+    );
+  }
+}
+
+el.figurePick.addEventListener("click", () => {
+  el.figureFile.value = "";
+  el.figureFile.click();
+});
+
+el.figureFile.addEventListener("change", () => {
+  const file = el.figureFile.files && el.figureFile.files[0];
+  if (file) analyzeFigureFile(file);
+});
+
+el.figureFromStart.addEventListener("click", openFigure);
+
+function figureLine() {
+  const values = state.figure && state.figure.values;
+  if (!values || !values.shoulders) return "";
+  const shoulders = {
+    "плечи шире бёдер": "Плечи шире бёдер: низ держим спокойным, без лишних деталей.",
+    "бёдра шире плеч": "Бёдра шире плеч: объём сверху и открытая шея уравновешивают.",
+    "равны": "Плечи и бёдра равны: подходит почти любой силуэт.",
+  }[values.shoulders];
+  const legs = {
+    "ноги длиннее корпуса": "Ноги длиннее корпуса: длинный верх можно.",
+    "корпус длиннее ног": "Корпус длиннее ног: помогают вертикали и высокая посадка.",
+    "примерно равны": "Ноги и корпус примерно равны: идут разные длины.",
+  }[values.legs];
+  return [shoulders, legs].filter(Boolean).join(" ");
+}
 
 // ── гардероб ───────────────────────────────────────────────
 
@@ -1862,6 +2322,8 @@ function buildAiMessages(values, gender, occasionLabels, exclude) {
 
   const shapeNote = `Форма лица: ${values.shape}. Черты: ${values.features}. Оттенки: ${values.temperature}. Контраст: ${values.contrast}.`;
 
+  const figureNote = figureLine() ? `\nФигура: ${figureLine()}` : "";
+
   const clothesRule =
     gender === "женский"
       ? "Можно предлагать юбки и каблук, если это уместно случаю."
@@ -1872,7 +2334,7 @@ function buildAiMessages(values, gender, occasionLabels, exclude) {
     : "";
 
   const user = `Человек: ${who}.
-${shapeNote}
+${shapeNote}${figureNote}
 
 Собери образы для случаев: ${occasionLabels.join(", ")}.
 ${clothesRule}${excludeNote}
@@ -2501,11 +2963,7 @@ function buildOutfit(occasion, values, gender, index, variant) {
       ["Верхний слой", outer],
     ],
     colors,
-    why: [
-      first,
-      second,
-      colorsWhy,
-    ],
+    why: [first, second, colorsWhy, figureLine()].filter(Boolean),
     variant,
     liked: false,
   };
@@ -3316,13 +3774,14 @@ const SCREENS = {
   outfits: { node: () => el.screenOutfits, step: "Шаг 3 из 3" },
   settings: { node: () => el.screenSettings, step: "Настройки" },
   wardrobe: { node: () => el.screenWardrobe, step: "Гардероб" },
+  figure: { node: () => el.screenFigure, step: "Фигура" },
 };
 
 function showScreen(name) {
   for (const key of Object.keys(SCREENS)) {
     SCREENS[key].node().hidden = key !== name;
   }
-  if (name !== "settings" && name !== "wardrobe") state.lastScreen = name;
+  if (name !== "settings" && name !== "wardrobe" && name !== "figure") state.lastScreen = name;
   el.steps.textContent = SCREENS[name].step;
   el.settingsBtn.hidden = name === "settings";
   el.wardrobeBtn.hidden = name === "wardrobe";
@@ -3332,6 +3791,7 @@ function showScreen(name) {
   if (name === "outfits") el.titleOutfits.focus({ preventScroll: true });
   if (name === "settings") el.titleSettings.focus({ preventScroll: true });
   if (name === "wardrobe") el.titleWardrobe.focus({ preventScroll: true });
+  if (name === "figure") el.titleFigure.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -3437,6 +3897,18 @@ class AppError extends Error {}
 // ── запуск: если разбор уже сохранён, показываем его ────────
 
 (function boot() {
+  const savedFigure = loadFigure();
+  if (savedFigure) {
+    state.figure = {
+      v: 1,
+      values: {
+        shoulders: savedFigure.values.shoulders || null,
+        legs: savedFigure.values.legs || null,
+      },
+      manual: { ...(savedFigure.manual || {}) },
+    };
+  }
+
   const savedWardrobe = loadWardrobe();
   if (savedWardrobe) state.wardrobe = savedWardrobe;
 

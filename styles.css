@@ -821,6 +821,29 @@ h1 {
   color: var(--ink-soft);
 }
 
+/* ── разбор фигуры ───────────────────────────────────── */
+
+.dropzone--small {
+  padding: 18px 18px 16px;
+}
+
+.dropzone--small .dropzone__art svg {
+  width: 62px;
+  height: 62px;
+}
+
+.linkbtn--start {
+  margin-top: 16px;
+  justify-self: center;
+}
+
+#figurePhoto img {
+  aspect-ratio: 3 / 4;
+  object-fit: contain;
+  object-position: center;
+  background: #efe7db;
+}
+
 /* ── гардероб ────────────────────────────────────────── */
 
 .ward-card {
