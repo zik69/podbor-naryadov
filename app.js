@@ -226,12 +226,14 @@ const el = {
   outfitNote: document.getElementById("outfitNote"),
   outfitWho: document.getElementById("outfitWho"),
   outfitSource: document.getElementById("outfitSource"),
+  weatherLine: document.getElementById("weatherLine"),
   settingsBtn: document.getElementById("settingsBtn"),
   screenSettings: document.getElementById("screen-settings"),
   titleSettings: document.getElementById("title-settings"),
   keyInput: document.getElementById("keyInput"),
   showKey: document.getElementById("showKey"),
   modelSelect: document.getElementById("modelSelect"),
+  cityInput: document.getElementById("cityInput"),
   settingsStatus: document.getElementById("settingsStatus"),
   saveKey: document.getElementById("saveKey"),
   testSearch: document.getElementById("testSearch"),
@@ -283,7 +285,7 @@ const state = {
   replacing: false,
   lastScreen: "start",
   profile: { gender: "", hideCompliment: false },
-  settings: { key: "", model: "deepseek-flash" },
+  settings: { key: "", model: "deepseek-flash", city: "Тверь" },
   searchCache: {},
   wardrobe: { v: 1, items: [] },
   ward: { photo: "", color: WARDROBE_COLORS[4] },
@@ -2057,6 +2059,10 @@ async function startWardrobeOutfits() {
   const run = ++state.outfitRun;
   let aiFailed = false;
 
+  setOutfitStatus("wait", "Смотрим погоду…");
+  await getWeather();
+  if (run !== state.outfitRun) return;
+
   if (hasAiKey()) {
     const controller = new AbortController();
     state.outfitAbort = controller;
@@ -2067,12 +2073,18 @@ async function startWardrobeOutfits() {
       const aiCards = await buildWardrobeCardsAi(values, controller.signal);
       if (run !== state.outfitRun) return;
 
-      state.outfits = { v: 1, source: "wardrobe", cards: aiCards };
+      state.outfits = {
+        v: 1,
+        source: "wardrobe",
+        weather: state.weather ? { ...state.weather } : null,
+        cards: aiCards,
+      };
       persistOutfits();
       renderOutfitWho();
       clearStatus(el.outfitStatus);
       renderOutfitCards();
       renderOutfitSource();
+      renderWeatherLine();
       el.outfitNote.textContent =
         "Комплекты собраны только из ваших вещей — их подобрала модель. Если что-то не подошло, нажмите «Не нравится».";
       el.outfitNote.hidden = false;
@@ -2088,12 +2100,18 @@ async function startWardrobeOutfits() {
     }
   }
 
-  state.outfits = { v: 1, source: "wardrobe", cards };
+  state.outfits = {
+    v: 1,
+    source: "wardrobe",
+    weather: state.weather ? { ...state.weather } : null,
+    cards,
+  };
   persistOutfits();
   renderOutfitWho();
   clearStatus(el.outfitStatus);
   renderOutfitCards();
   renderOutfitSource();
+  renderWeatherLine();
   el.outfitNote.textContent =
     "Комплекты собраны только из ваших вещей. Если что-то не подошло, нажмите «Не нравится».";
   el.outfitNote.hidden = false;
@@ -2120,7 +2138,12 @@ function persistSettings() {
   try {
     localStorage.setItem(
       SETTINGS_KEY,
-      JSON.stringify({ v: 1, key: state.settings.key, model: state.settings.model })
+      JSON.stringify({
+        v: 1,
+        key: state.settings.key,
+        model: state.settings.model,
+        city: state.settings.city,
+      })
     );
   } catch {
     // хранилище может быть выключено — тогда просто не запоминаем
@@ -2137,6 +2160,7 @@ function openSettings() {
   el.showKey.textContent = "Показать";
   el.showKey.setAttribute("aria-pressed", "false");
   el.modelSelect.value = state.settings.model;
+  el.cityInput.value = state.settings.city || "Тверь";
   clearStatus(el.settingsStatus);
   if (hasAiKey()) setSettingsStatus("ok", "Ключ сохранён на этом устройстве.");
   showScreen("settings");
@@ -2203,15 +2227,21 @@ el.showKey.addEventListener("click", () => {
 
 el.saveKey.addEventListener("click", async () => {
   const key = el.keyInput.value.trim();
+  const city = el.cityInput.value.trim() || "Тверь";
+
+  state.settings.city = city;
+  persistSettings();
+
   if (!key) {
-    setSettingsStatus("bad", "Вставьте ключ — без него модель не сможет работать.");
-    el.keyInput.focus();
+    setSettingsStatus("ok", `Город сохранён: ${city}. Ключ можно вставить позже — образы будут по правилам.`);
+    state.weather = null;
     return;
   }
 
   const before = state.settings.key;
   state.settings.key = key;
   state.settings.model = el.modelSelect.value;
+  state.settings.city = city;
   persistSettings();
 
   setSettingsStatus("wait", "Проверяем ключ…");
@@ -2329,6 +2359,10 @@ function buildAiMessages(values, gender, occasionLabels, exclude) {
 
   const figureNote = figureLine() ? `\nФигура: ${figureLine()}` : "";
 
+  const weatherNote = state.weather
+    ? `\nПогода: ${state.weather.temp}°${state.weather.desc ? ", " + state.weather.desc : ""}. Учти это в верхнем слое.`
+    : `\nСезон: ${seasonName()} (погода недоступна). Учти это в верхнем слое.`;
+
   const clothesRule =
     gender === "женский"
       ? "Можно предлагать юбки и каблук, если это уместно случаю."
@@ -2339,7 +2373,7 @@ function buildAiMessages(values, gender, occasionLabels, exclude) {
     : "";
 
   const user = `Человек: ${who}.
-${shapeNote}${figureNote}
+${shapeNote}${figureNote}${weatherNote}
 
 Собери образы для случаев: ${occasionLabels.join(", ")}.
 ${clothesRule}${excludeNote}
@@ -2690,6 +2724,166 @@ function searchLinksFor(query) {
   }));
 }
 
+// ── погода ──────────────────────────────────────────────────
+
+const WEATHER_KEY = "naryady.pogoda.v1";
+const WEATHER_TTL = 30 * 60 * 1000;
+
+function persistWeather() {
+  try {
+    localStorage.setItem(WEATHER_KEY, JSON.stringify(state.weather || null));
+  } catch {
+    // не критично
+  }
+}
+
+async function fetchWeather(city) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    // 1. город → координаты (OpenStreetMap)
+    const geoResponse = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(city)}&format=json&limit=1&accept-language=ru`,
+      { signal: controller.signal }
+    );
+    if (!geoResponse.ok) return null;
+
+    const places = await geoResponse.json();
+    if (!Array.isArray(places) || !places.length) return null;
+
+    const place = places[0];
+    const lat = Number(place.lat);
+    const lon = Number(place.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+    // 2. координаты → погода (met.no)
+    const weatherResponse = await fetch(
+      `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`,
+      { signal: controller.signal }
+    );
+    if (!weatherResponse.ok) return null;
+
+    const data = await weatherResponse.json();
+    const series = data && data.properties && data.properties.timeseries;
+    if (!Array.isArray(series) || !series.length) return null;
+
+    const now = series[0];
+    const temp = now && now.data && now.data.instant && now.data.instant.details
+      ? Number(now.data.instant.details.air_temperature)
+      : null;
+    if (!Number.isFinite(temp)) return null;
+
+    const symbol =
+      (now.data.next_1_hours && now.data.next_1_hours.summary && now.data.next_1_hours.summary.symbol_code) ||
+      "";
+
+    return {
+      city,
+      lat,
+      lon,
+      temp,
+      desc: describeWeather(symbol),
+      at: Date.now(),
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function describeWeather(symbol) {
+  const key = String(symbol).replace(/_(day|night|polartwilight)$/, "");
+  const words = {
+    clearsky: "ясно",
+    fair: "малооблачно",
+    partlycloudy: "переменная облачность",
+    cloudy: "облачно",
+    fog: "туман",
+    lightrain: "небольшой дождь",
+    lightrainshowers: "небольшой дождь",
+    rain: "дождь",
+    rainshowers: "ливень",
+    heavyrain: "сильный дождь",
+    lightrainandthunder: "дождь с грозой",
+    rainandthunder: "дождь с грозой",
+    lightsleet: "мокрый снег",
+    sleet: "мокрый снег",
+    lightsnow: "небольшой снег",
+    snow: "снег",
+    heavysnow: "сильный снег",
+    snowshowers: "снегопад",
+  };
+  return words[key] || "";
+}
+
+async function getWeather() {
+  const city = (state.settings.city || "Тверь").trim() || "Тверь";
+  const cached = state.weather;
+
+  if (cached && cached.city === city && Date.now() - cached.at < WEATHER_TTL) {
+    return cached;
+  }
+
+  const fresh = await fetchWeather(city);
+  if (fresh) {
+    state.weather = fresh;
+    persistWeather();
+  }
+  return fresh;
+}
+
+function seasonName() {
+  const month = new Date().getMonth();
+  if (month === 11 || month <= 1) return "зима";
+  if (month <= 4) return "весна";
+  if (month <= 7) return "лето";
+  return "осень";
+}
+
+function seasonAdvice() {
+  const season = seasonName();
+  if (season === "зима") return "На улице зима — нужен тёплый верхний слой.";
+  if (season === "весна") return "На улице весна — лучше с курткой или тренчем.";
+  if (season === "лето") return "На улице лето — верхний слой скорее не нужен.";
+  return "На улице осень — верхний слой нужен.";
+}
+
+function weatherAdvice(temp) {
+  if (temp == null) return seasonAdvice();
+  if (temp < 0) return "На улице минус — нужно тёплое пальто или куртка.";
+  if (temp < 10) return "На улице прохладно — куртка или пальто.";
+  if (temp < 18) return "На улице тепло — хватит тренча или кардигана.";
+  return "На улице жарко — верхний слой не нужен.";
+}
+
+function weatherOuterValue(temp) {
+  if (temp == null) {
+    const season = seasonName();
+    if (season === "лето") return "";
+    if (season === "зима") return "тёплое пальто или куртка";
+    if (season === "весна") return "куртка или тренч";
+    return "куртка, пальто или тренч";
+  }
+  if (temp < 0) return "тёплое пальто или куртка";
+  if (temp < 10) return "куртка или пальто";
+  if (temp < 18) return "тренч или кардиган";
+  return "";
+}
+
+function renderWeatherLine() {
+  const snapshot = (state.outfits && state.outfits.weather) || state.weather;
+
+  if (!snapshot) {
+    el.weatherLine.textContent = `Погода недоступна — учли сезон: ${seasonName()}.`;
+    return;
+  }
+
+  const desc = snapshot.desc ? `, ${snapshot.desc}` : "";
+  el.weatherLine.textContent = `${snapshot.city}: сейчас ${snapshot.temp}°${desc}.`;
+}
+
 // ── образы под разбор ───────────────────────────────────────
 
 const OUTFITS_KEY = "naryady.obrazy.v1";
@@ -2945,6 +3139,10 @@ function buildOutfit(occasion, values, gender, index, variant) {
   const bottom = bottoms[(index + variant + 1) % bottoms.length];
   const shoes = shoesList[(index + variant) % shoesList.length];
   const outer = outerList[(index + variant + 1) % outerList.length];
+
+  const temp = state.weather ? state.weather.temp : null;
+  const weatherOuter = weatherOuterValue(temp);
+  const outerValue = weatherOuter || outer;
   const colors = [
     palette[(index * 2 + variant) % palette.length],
     palette[(index * 2 + 1 + variant) % palette.length],
@@ -2966,10 +3164,10 @@ function buildOutfit(occasion, values, gender, index, variant) {
       ["Верх", top],
       ["Низ", bottom],
       ["Обувь", shoes],
-      ["Верхний слой", outer],
+      ...(outerValue ? [["Верхний слой", outerValue]] : []),
     ],
     colors,
-    why: [first, second, colorsWhy, figureLine()].filter(Boolean),
+    why: [first, second, colorsWhy, figureLine(), weatherAdvice(temp)].filter(Boolean),
     variant,
     liked: false,
   };
@@ -3549,6 +3747,7 @@ async function startOutfits(forceRules = false) {
     clearStatus(el.outfitStatus);
     renderOutfitCards();
     renderOutfitSource();
+    renderWeatherLine();
     el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
     el.outfitNote.hidden = false;
     renderOutfitActions("ready");
@@ -3570,6 +3769,10 @@ async function startOutfits(forceRules = false) {
     renderOutfitActions("missing");
     return;
   }
+
+  setOutfitStatus("wait", "Смотрим погоду…");
+  await getWeather();
+  if (run !== state.outfitRun) return;
 
   if (!forceRules && hasAiKey()) {
     const controller = new AbortController();
@@ -3598,12 +3801,19 @@ async function startOutfits(forceRules = false) {
       if (cards.length < 3) throw new AiError("Модель не собрала образы. Попробуйте ещё раз.");
 
       state.outfitRound = 0;
-      state.outfits = { v: 1, source: "ai", model: state.settings.model, cards };
+      state.outfits = {
+        v: 1,
+        source: "ai",
+        model: state.settings.model,
+        weather: state.weather ? { ...state.weather } : null,
+        cards,
+      };
       state.outfitBackup = null;
       persistOutfits();
       clearStatus(el.outfitStatus);
       renderOutfitCards();
       renderOutfitSource();
+      renderWeatherLine();
       el.outfitNote.textContent =
         "Образы придумала модель. Если что-то не про вас — нажмите «Не нравится». Магазины и цены — российские.";
       el.outfitNote.hidden = false;
@@ -3634,6 +3844,7 @@ async function startOutfits(forceRules = false) {
     state.outfits = {
       v: 1,
       source: "rules",
+      weather: state.weather ? { ...state.weather } : null,
       cards: generateOutfits(values, state.profile.gender),
     };
     state.outfitBackup = null;
@@ -3641,6 +3852,7 @@ async function startOutfits(forceRules = false) {
     clearStatus(el.outfitStatus);
     renderOutfitCards();
     renderOutfitSource();
+    renderWeatherLine();
     el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените. Магазины и цены — российские.";
     el.outfitNote.hidden = false;
     renderOutfitActions("ready");
@@ -3926,6 +4138,7 @@ class AppError extends Error {}
       : savedSettings.model === "deepseek-v4-flash"
         ? "deepseek-flash"
         : "deepseek-flash";
+    state.settings.city = String(savedSettings.city || "Тверь").trim() || "Тверь";
   }
 
   const savedProfile = loadProfile();

@@ -137,6 +137,7 @@
 
         <p class="outfit-who" id="outfitWho"></p>
         <p class="outfit-source" id="outfitSource"></p>
+        <p class="weather-line" id="weatherLine"></p>
 
         <div class="status" id="outfitStatus" role="status" aria-live="polite"></div>
 
@@ -260,6 +261,12 @@
               <option value="deepseek-flash">V4 Flash — дешевле</option>
               <option value="deepseek-v4-pro">V4 Pro — умнее</option>
             </select>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Город для погоды</span>
+            <input id="cityInput" type="text" maxlength="60" placeholder="Тверь" autocomplete="off">
+            <span class="field__hint">Нужен, чтобы советовать верхний слой по погоде.</span>
           </label>
 
           <div class="status" id="settingsStatus" role="status" aria-live="polite"></div>

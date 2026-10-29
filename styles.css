@@ -888,7 +888,8 @@ h1 {
 .ward-photo img[hidden] { display: none; }
 
 #wardType,
-#wardName {
+#wardName,
+#cityInput {
   width: 100%;
   padding: 11px 13px;
   border-radius: 12px;
@@ -900,7 +901,8 @@ h1 {
 }
 
 #wardType:focus-visible,
-#wardName:focus-visible {
+#wardName:focus-visible,
+#cityInput:focus-visible {
   outline: 2px solid rgba(168, 85, 47, .4);
   outline-offset: 2px;
 }
@@ -1063,6 +1065,14 @@ h1 {
 }
 
 .outfit-source:empty { display: none; }
+
+.weather-line {
+  margin: -10px 0 14px;
+  font-size: 13px;
+  color: var(--accent-dark);
+}
+
+.weather-line:empty { display: none; }
 
 /* на широком экране образов делаем две колонки и больше места */
 @media (min-width: 900px) {
