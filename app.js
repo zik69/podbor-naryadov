@@ -22,6 +22,13 @@ const LANDMARK_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
 const RAZBOR_KEY = "naryady.razbor.v1";
+const PROFILE_KEY = "naryady.profil.v1";
+
+const GENDERS = [
+  { value: "женский", label: "Женский" },
+  { value: "мужской", label: "Мужской" },
+  { value: "", label: "Не указывать" },
+];
 
 const RAZBOR_FIELDS = [
   {
@@ -120,11 +127,18 @@ const el = {
   analysisCards: document.getElementById("analysisCards"),
   analysisNote: document.getElementById("analysisNote"),
   analysisActions: document.getElementById("analysisActions"),
+  startGenderChips: document.getElementById("startGenderChips"),
+  analysisGenderChips: document.getElementById("analysisGenderChips"),
+  compliment: document.getElementById("compliment"),
+  complimentText: document.getElementById("complimentText"),
+  complimentHide: document.getElementById("complimentHide"),
+  complimentBack: document.getElementById("complimentBack"),
   screenOutfits: document.getElementById("screen-outfits"),
   titleOutfits: document.getElementById("title-outfits"),
   outfitStatus: document.getElementById("outfitStatus"),
   outfitCards: document.getElementById("outfitCards"),
   outfitNote: document.getElementById("outfitNote"),
+  outfitWho: document.getElementById("outfitWho"),
   outfitActions: document.getElementById("outfitActions"),
 };
 
@@ -137,6 +151,7 @@ const state = {
   razbor: null,
   outfits: null,
   outfitRun: 0,
+  profile: { gender: "", hideCompliment: false },
 };
 
 let detectorPromise = null;
@@ -736,6 +751,7 @@ async function openAnalysis() {
     clearStatus(el.analysisStatus);
     renderCards();
     renderAnalysisActions();
+    renderCompliment();
     el.analysisNote.textContent = Object.keys(state.manual).length
       ? "Часть пунктов вы поправили сами — дальше опираемся на ваш выбор."
       : "Это версия ассистента, а не приговор. Если не совпадает — поправьте.";
@@ -749,6 +765,7 @@ async function openAnalysis() {
     state.razbor = { v: 1, values: empty, manual: { ...state.manual }, failed: true };
     clearOutfits();
     renderCards();
+    renderCompliment();
 
     el.analysisStatus.className = "status status--bad";
     el.analysisStatus.textContent =
@@ -849,6 +866,7 @@ function buildCard(field) {
       clearOutfits();
       renderCards();
       renderAnalysisActions();
+      renderCompliment();
       el.analysisNote.textContent = "Часть пунктов вы поправили сами — дальше опираемся на ваш выбор.";
       el.analysisNote.hidden = false;
       const next = el.analysisCards.querySelector(`.rcard[data-key="${field.key}"] .rcard__edit`);
@@ -909,6 +927,92 @@ function renderAnalysisActions() {
   }
 }
 
+// ── пол и добрые слова ──────────────────────────────────────
+
+function persistProfile() {
+  try {
+    localStorage.setItem(PROFILE_KEY, JSON.stringify({ v: 1, ...state.profile }));
+  } catch {
+    // хранилище может быть выключено — тогда просто не запоминаем
+  }
+}
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function renderGenderChips() {
+  for (const container of [el.startGenderChips, el.analysisGenderChips]) {
+    if (!container) continue;
+    container.replaceChildren();
+    for (const item of GENDERS) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "chip chip--gender";
+      chip.textContent = item.label;
+      chip.setAttribute("aria-pressed", String(state.profile.gender === item.value));
+      chip.addEventListener("click", () => setGender(item.value));
+      container.append(chip);
+    }
+  }
+}
+
+function setGender(value) {
+  if (state.profile.gender === value) return;
+  state.profile.gender = value;
+  persistProfile();
+  renderGenderChips();
+
+  // прежние образы собраны для другого выбора — их больше нельзя показывать
+  clearOutfits();
+  el.outfitCards.replaceChildren();
+  clearStatus(el.outfitStatus);
+  renderOutfitWho();
+
+  renderCompliment();
+  if (state.razbor) renderAnalysisActions();
+}
+
+function renderCompliment() {
+  const values = (state.razbor && state.razbor.values) || {};
+  const ready = RAZBOR_FIELDS.every((field) => values[field.key]);
+  const text = ready ? buildCompliment(values, state.profile.gender) : "";
+
+  if (!text) {
+    el.compliment.hidden = true;
+    el.complimentBack.hidden = true;
+    el.complimentText.textContent = "";
+    return;
+  }
+
+  el.complimentText.textContent = text;
+  const hidden = state.profile.hideCompliment;
+  el.compliment.hidden = hidden;
+  el.complimentBack.hidden = !hidden;
+}
+
+el.complimentHide.addEventListener("click", () => {
+  state.profile.hideCompliment = true;
+  persistProfile();
+  renderCompliment();
+  el.complimentBack.focus();
+});
+
+el.complimentBack.addEventListener("click", () => {
+  state.profile.hideCompliment = false;
+  persistProfile();
+  renderCompliment();
+  el.complimentHide.focus();
+});
+
 // ── образы под разбор ───────────────────────────────────────
 
 const OUTFITS_KEY = "naryady.obrazy.v1";
@@ -949,7 +1053,7 @@ const SHAPE_TOPS = {
     "рубашка, расстёгнутая на две верхние пуговицы",
     "футболка с вырезом уголком",
     "лонгслив с V-вырезом",
-    "кардиган нараспашку поверх простого топа",
+    "кардиган нараспашку поверх футболки",
   ],
   "квадрат": [
     "рубашка с мягким воротником",
@@ -958,7 +1062,7 @@ const SHAPE_TOPS = {
     "худи с мягким капюшоном",
   ],
   "сердце": [
-    "лонгслив с открытыми плечами",
+    "лонгслив с широким круглым вырезом",
     "рубашка с широким воротом",
     "футболка с вырезом-лодочкой",
     "свитер с объёмным воротом",
@@ -977,20 +1081,50 @@ const SHAPE_TOPS = {
   ],
 };
 
-// низ подбираем под черты: мягкие линии или чёткие
-const FEATURES_BOTTOMS = {
-  "мягкие": [
-    "прямые брюки или юбка-миди",
-    "мягкие брюки на резинке",
-    "джинсы прямого кроя",
-    "прямые брюки из мягкой ткани",
-  ],
-  "резкие": [
-    "брюки со стрелкой или юбка-карандаш",
-    "джинсы с чёткой линией",
-    "широкие брюки с чёткой складкой",
-    "кожаные брюки прямого кроя",
-  ],
+// низ подбираем под черты и под то, для кого образ
+const BOTTOMS = {
+  "женский": {
+    "мягкие": [
+      "прямые брюки или юбка-миди",
+      "мягкие брюки на резинке",
+      "джинсы прямого кроя",
+      "юбка-миди с мягкой складкой",
+    ],
+    "резкие": [
+      "брюки со стрелкой или юбка-карандаш",
+      "джинсы с чёткой линией",
+      "широкие брюки с чёткой складкой",
+      "кожаная юбка-карандаш",
+    ],
+  },
+  "мужской": {
+    "мягкие": [
+      "прямые брюки из мягкой ткани",
+      "прямые брюки из плотной ткани",
+      "джинсы прямого кроя",
+      "мягкие брюки на резинке",
+    ],
+    "резкие": [
+      "брюки со стрелкой",
+      "джинсы с чёткой линией",
+      "широкие брюки с чёткой складкой",
+      "тёмные прямые брюки",
+    ],
+  },
+  "": {
+    "мягкие": [
+      "прямые брюки из мягкой ткани",
+      "джинсы прямого кроя",
+      "мягкие брюки на резинке",
+      "прямые брюки",
+    ],
+    "резкие": [
+      "брюки со стрелкой",
+      "джинсы с чёткой линией",
+      "широкие брюки с чёткой складкой",
+      "тёмные прямые брюки",
+    ],
+  },
 };
 
 const OCCASIONS = [
@@ -998,31 +1132,100 @@ const OCCASIONS = [
     key: "work",
     label: "на работу",
     title: "Спокойный образ на работу",
-    shoes: ["лоферы", "туфли на небольшом каблуке", "чистые белые кроссовки"],
-    outer: ["пиджак прямого кроя", "кардиган ниже бедра", "тренч"],
+    shoes: {
+      "женский": ["лоферы", "туфли на небольшом каблуке", "чистые белые кроссовки"],
+      default: ["лоферы", "кожаные туфли", "чистые белые кроссовки"],
+    },
+    outer: {
+      "женский": ["пиджак прямого кроя", "кардиган ниже бедра", "тренч"],
+      default: ["пиджак прямого кроя", "кардиган", "тренч"],
+    },
   },
   {
     key: "walk",
     label: "на прогулку",
     title: "Свободный образ на прогулку",
-    shoes: ["кеды", "ботинки на плоской подошве", "кроссовки"],
-    outer: ["джинсовая куртка", "куртка-бомбер", "тренч"],
+    shoes: {
+      default: ["кеды", "ботинки на плоской подошве", "кроссовки"],
+    },
+    outer: {
+      default: ["джинсовая куртка", "куртка-бомбер", "тренч"],
+    },
   },
   {
     key: "date",
     label: "на свидание",
     title: "Собранный образ на свидание",
-    shoes: ["туфли на небольшом каблуке", "лоферы", "аккуратные ботинки"],
-    outer: ["пиджак мягкой посадки", "кардиган", "пальто прямого кроя"],
+    shoes: {
+      "женский": ["туфли на небольшом каблуке", "лоферы", "аккуратные ботинки"],
+      default: ["лоферы", "кожаные туфли", "аккуратные ботинки"],
+    },
+    outer: {
+      default: ["пиджак мягкой посадки", "кардиган", "пальто прямого кроя"],
+    },
   },
   {
     key: "cafe",
     label: "в кафе с друзьями",
     title: "Лёгкий образ в кафе с друзьями",
-    shoes: ["кроссовки", "кеды", "лоферы"],
-    outer: ["джинсовая куртка", "кардиган", "куртка-бомбер"],
+    shoes: {
+      default: ["кроссовки", "кеды", "лоферы"],
+    },
+    outer: {
+      default: ["джинсовая куртка", "кардиган", "куртка-бомбер"],
+    },
   },
 ];
+
+function occasionList(occasion, part, gender) {
+  return occasion[part][gender] || occasion[part].default;
+}
+
+// добрые слова: только про то, что приложение правда измерило
+const FEATURES_PRAISE = {
+  "женский": {
+    "мягкие": "У вас мягкие, плавные черты — очень тёплое, спокойное впечатление.",
+    "резкие": "У вас чёткие, выразительные черты — они делают образ ярким.",
+  },
+  "мужской": {
+    "мягкие": "У вас мягкие, спокойные черты — с таким лицом легко выглядеть дружелюбно.",
+    "резкие": "У вас чёткая линия челюсти и заметные скулы — это выглядит собранно.",
+  },
+  "": {
+    "мягкие": "У вас мягкие, плавные черты — спокойное и тёплое впечатление.",
+    "резкие": "У вас чёткие, выразительные черты — они делают образ заметным.",
+  },
+};
+
+const COLOR_PRAISE = {
+  "тёплые|высокий": {
+    "женский": "Тёплые оттенки и заметный контраст — вам очень идут терракота, кирпичный и чистый белый.",
+    "мужской": "Тёплые оттенки вам к лицу — особенно терракота, олива и тёплый беж.",
+    "": "Тёплые оттенки вам к лицу — особенно терракота, олива и тёплый беж.",
+  },
+  "тёплые|спокойный": {
+    "женский": "Вам идут мягкие тёплые оттенки — песочный, коралловый и олива.",
+    "мужской": "Спокойные тёплые оттенки — песочный, олива и тёплый беж — вам к лицу.",
+    "": "Спокойные тёплые оттенки — песочный, олива и тёплый беж — вам к лицу.",
+  },
+  "холодные|высокий": {
+    "женский": "Холодные оттенки и заметный контраст — вам идут изумруд, вино и чистый белый.",
+    "мужской": "Холодные оттенки вам к лицу — особенно изумруд, серо-голубой и вино.",
+    "": "Холодные оттенки вам к лицу — особенно изумруд, серо-голубой и вино.",
+  },
+  "холодные|спокойный": {
+    "женский": "Вам идут спокойные прохладные оттенки — серо-голубой, сливовый и лавандовый.",
+    "мужской": "Спокойные прохладные оттенки — серо-голубой, стальной и деним — вам к лицу.",
+    "": "Спокойные прохладные оттенки — серо-голубой, стальной и деним — вам к лицу.",
+  },
+};
+
+function buildCompliment(values, gender) {
+  const first = FEATURES_PRAISE[gender]?.[values.features];
+  const second = COLOR_PRAISE[`${values.temperature}|${values.contrast}`]?.[gender];
+  if (!first || !second) return "";
+  return `${first} ${second}`;
+}
 
 const SHAPE_WHY = {
   "овал": "Овал: подходит почти любой вырез — выбрали удобный для случая.",
@@ -1048,20 +1251,23 @@ const CONTRAST_WHY = {
   "спокойный": "Мягкие переходы в одной гамме смотрятся цельно.",
 };
 
-function buildOutfit(occasion, values, index, variant) {
+function buildOutfit(occasion, values, gender, index, variant) {
   const shape = SHAPE_TOPS[values.shape] ? values.shape : "овал";
-  const features = FEATURES_BOTTOMS[values.features] ? values.features : "мягкие";
+  const features = values.features === "резкие" ? "резкие" : "мягкие";
   const temperature = PALETTES[values.temperature] ? values.temperature : "тёплые";
   const contrast = CONTRAST_WHY[values.contrast] ? values.contrast : "спокойный";
+  const who = BOTTOMS[gender] ? gender : "";
 
   const tops = SHAPE_TOPS[shape];
-  const bottoms = FEATURES_BOTTOMS[features];
+  const bottoms = BOTTOMS[who][features];
   const palette = PALETTES[temperature];
+  const shoesList = occasionList(occasion, "shoes", who);
+  const outerList = occasionList(occasion, "outer", who);
 
   const top = tops[(index + variant) % tops.length];
   const bottom = bottoms[(index + variant + 1) % bottoms.length];
-  const shoes = occasion.shoes[(index + variant) % occasion.shoes.length];
-  const outer = occasion.outer[(index + variant + 1) % occasion.outer.length];
+  const shoes = shoesList[(index + variant) % shoesList.length];
+  const outer = outerList[(index + variant + 1) % outerList.length];
   const colors = [
     palette[(index * 2 + variant) % palette.length],
     palette[(index * 2 + 1 + variant) % palette.length],
@@ -1104,8 +1310,8 @@ function outfitSignature(outfit) {
   ].join("|");
 }
 
-function generateOutfits(values, round = 0) {
-  return OCCASIONS.map((occasion, index) => buildOutfit(occasion, values, index, round));
+function generateOutfits(values, gender, round = 0) {
+  return OCCASIONS.map((occasion, index) => buildOutfit(occasion, values, gender, index, round));
 }
 
 function replaceOutfit(index) {
@@ -1115,7 +1321,7 @@ function replaceOutfit(index) {
   const base = OCCASIONS.indexOf(occasion);
   const previous = outfitSignature(current);
   let variant = (current.variant || 0) + 1;
-  let next = buildOutfit(occasion, state.razbor.values, base, variant);
+  let next = buildOutfit(occasion, state.razbor.values, state.profile.gender, base, variant);
 
   // новый образ не должен повторять ни старый, ни соседние карточки
   for (let step = 0; step < 12; step += 1) {
@@ -1124,7 +1330,7 @@ function replaceOutfit(index) {
     );
     if (!same) break;
     variant += 1;
-    next = buildOutfit(occasion, state.razbor.values, base, variant);
+    next = buildOutfit(occasion, state.razbor.values, state.profile.gender, base, variant);
   }
 
   cards[index] = next;
@@ -1136,8 +1342,17 @@ function replaceOutfit(index) {
   if (focus) focus.focus();
 }
 
-function setOutfitStatus(kind, text) {
-  el.outfitStatus.className = `status status--${kind}`;
+const OUTFIT_WHO = {
+  "женский": "Образы для женщин",
+  "мужской": "Образы для мужчин",
+  "": "Универсальные образы",
+};
+
+function renderOutfitWho() {
+  el.outfitWho.textContent = OUTFIT_WHO[state.profile.gender] || OUTFIT_WHO[""];
+}
+
+function setOutfitStatus(kind, text) {  el.outfitStatus.className = `status status--${kind}`;
   el.outfitStatus.replaceChildren();
   if (kind === "wait") el.outfitStatus.append(spinner());
   el.outfitStatus.append(document.createTextNode(text));
@@ -1312,7 +1527,10 @@ function renderOutfitActions(mode) {
     again.addEventListener("click", () => {
       const round = (state.outfitRound || 0) + 1;
       state.outfitRound = round;
-      state.outfits = { v: 1, cards: generateOutfits(state.razbor.values, round) };
+      state.outfits = {
+        v: 1,
+        cards: generateOutfits(state.razbor.values, state.profile.gender, round),
+      };
       persistOutfits();
       renderOutfitCards();
       setOutfitStatus("ok", "Собрали новый набор.");
@@ -1323,6 +1541,7 @@ function renderOutfitActions(mode) {
 
 async function startOutfits() {
   showScreen("outfits");
+  renderOutfitWho();
   el.outfitCards.replaceChildren();
 
   if (!state.outfits) {
@@ -1347,7 +1566,10 @@ async function startOutfits() {
       }
 
       state.outfitRound = 0;
-      state.outfits = { v: 1, cards: generateOutfits(values) };
+      state.outfits = {
+        v: 1,
+        cards: generateOutfits(values, state.profile.gender),
+      };
       persistOutfits();
       clearStatus(el.outfitStatus);
       renderOutfitCards();
@@ -1486,6 +1708,7 @@ function reset() {
   el.outfitActions.replaceChildren();
   clearStatus(el.outfitStatus);
   clearStatus(el.analysisStatus);
+  renderCompliment();
   showScreen("start");
 }
 
@@ -1612,6 +1835,15 @@ class AppError extends Error {}
 // ── запуск: если разбор уже сохранён, показываем его ────────
 
 (function boot() {
+  const savedProfile = loadProfile();
+  if (savedProfile) {
+    state.profile = {
+      gender: GENDERS.some((item) => item.value === savedProfile.gender) ? savedProfile.gender : "",
+      hideCompliment: Boolean(savedProfile.hideCompliment),
+    };
+  }
+  renderGenderChips();
+
   const saved = loadRazbor();
   if (saved && !(saved.failed && !Object.keys(saved.manual || {}).length)) {
     state.razbor = saved;
@@ -1622,12 +1854,13 @@ class AppError extends Error {}
 
     showScreen("analysis");
     renderCards();
+    renderAnalysisActions();
+    renderCompliment();
     el.analysisPhoto.replaceChildren(photoPreview());
     el.analysisNote.textContent = state.outfits
       ? "Разбор и образы сохранены на этом устройстве. Фото мы не храним — загрузите новое, чтобы обновить черты."
       : "Разбор сохранён на этом устройстве. Фото мы не храним — загрузите новое, чтобы обновить черты.";
     el.analysisNote.hidden = false;
-    renderAnalysisActions();
     return;
   }
 

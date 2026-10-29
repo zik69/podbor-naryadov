@@ -27,6 +27,14 @@
           которые вам идут.
         </p>
 
+        <div class="asking" id="startGender">
+          <p class="asking__label" id="startGenderLabel">Для кого подбираем образы?</p>
+          <div class="chips" id="startGenderChips" role="group" aria-labelledby="startGenderLabel"></div>
+          <p class="asking__hint">
+            Это нужно, чтобы не советовать юбку, если вы её не носите.
+          </p>
+        </div>
+
         <div class="dropzone" id="dropzone">
           <div class="dropzone__art" aria-hidden="true">
             <svg viewBox="0 0 120 120" role="presentation">
@@ -83,6 +91,20 @@
           дальше советы будут опираться на ваш выбор.
         </p>
 
+        <div class="asking asking--compact" id="analysisGender">
+          <p class="asking__label" id="analysisGenderLabel">Образы для кого</p>
+          <div class="chips" id="analysisGenderChips" role="group" aria-labelledby="analysisGenderLabel"></div>
+        </div>
+
+        <div class="compliment" id="compliment" hidden>
+          <p class="compliment__text" id="complimentText"></p>
+          <button class="compliment__hide" type="button" id="complimentHide">Скрыть</button>
+        </div>
+
+        <button class="compliment__back" type="button" id="complimentBack" hidden>
+          Вернуть добрые слова
+        </button>
+
         <div class="status" id="analysisStatus" role="status" aria-live="polite"></div>
 
         <div class="review-grid">
@@ -104,6 +126,8 @@
           Собраны по вашему типажу и форме лица. Если образ не про вас —
           нажмите «Не нравится», и ассистент предложит другой.
         </p>
+
+        <p class="outfit-who" id="outfitWho"></p>
 
         <div class="status" id="outfitStatus" role="status" aria-live="polite"></div>
 

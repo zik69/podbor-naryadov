@@ -594,12 +594,123 @@ h1 {
 
 .linkbtn:hover { color: var(--bad); }
 
+/* ── пол и добрые слова ──────────────────────────────── */
+
+.asking {
+  margin: 0 0 18px;
+  padding: 14px 16px 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .5);
+  border: 1px solid var(--line);
+}
+
+.asking--compact {
+  margin-bottom: 14px;
+  padding: 12px 14px 10px;
+}
+
+.asking__label {
+  margin: 0 0 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.asking__hint {
+  margin: 9px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #8f8478;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.chip--gender {
+  padding: 7px 13px;
+  font-size: 13.5px;
+}
+
+.compliment {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 15px 16px 14px 17px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff8ef 0%, #f6ebdd 100%);
+  border: 1px solid rgba(168, 85, 47, .22);
+}
+
+.compliment::before {
+  content: "♥";
+  color: var(--accent);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.compliment__text {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 16.5px;
+  line-height: 1.45;
+}
+
+.compliment__hide {
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-left: auto;
+  border: 0;
+  background: none;
+  padding: 2px 0;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.compliment__hide:hover { color: var(--ink); }
+
+.compliment[hidden] { display: none; }
+
+.compliment__back {
+  display: inline-block;
+  margin: 0 0 14px;
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.compliment__back[hidden] { display: none; }
+
 /* ── образы ──────────────────────────────────────────── */
 
 .outfit-grid {
   display: grid;
   gap: 14px;
   margin-top: 6px;
+}
+
+.outfit-who {
+  margin: -6px 0 14px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--accent-dark);
 }
 
 /* на широком экране образов делаем две колонки и больше места */
