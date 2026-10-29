@@ -28,8 +28,20 @@ const SETTINGS_KEY = "naryady.nastroyki.v1";
 const DEEPSEEK_API = "https://api.deepseek.com";
 
 const AI_MODELS = [
-  { value: "deepseek-v4-flash", label: "V4 Flash" },
+  { value: "deepseek-flash", label: "V4 Flash" },
   { value: "deepseek-v4-pro", label: "V4 Pro" },
+];
+
+const SEARCH_URL = `${DEEPSEEK_API}/v1/tools/search`;
+const FETCH_URL = `${DEEPSEEK_API}/v1/tools/fetch`;
+const SEARCH_KEY = "naryady.poisk.v1";
+const SEARCH_TTL = 15 * 60 * 1000;
+
+const SHOPS = [
+  { host: "market.yandex.ru", name: "Яндекс Маркет", search: "https://market.yandex.ru/search?text=" },
+  { host: "lamoda.ru", name: "Lamoda", search: "https://www.lamoda.ru/catalogsearch/result/?q=" },
+  { host: "wildberries.ru", name: "Wildberries", search: "https://www.wildberries.ru/catalog/0/search.aspx?search=" },
+  { host: "ozon.ru", name: "Ozon", search: "https://www.ozon.ru/search/?text=" },
 ];
 
 const GENDERS = [
@@ -172,10 +184,12 @@ const state = {
   outfitRun: 0,
   outfitAbort: null,
   outfitBackup: null,
+  offerAbort: null,
   replacing: false,
   lastScreen: "start",
   profile: { gender: "", hideCompliment: false },
-  settings: { key: "", model: "deepseek-v4-flash" },
+  settings: { key: "", model: "deepseek-flash" },
+  searchCache: {},
 };
 
 let detectorPromise = null;
@@ -1358,6 +1372,157 @@ function showAiError(error) {  setOutfitStatus("bad", error instanceof AiError ?
   renderOutfitActions("aiFailed");
 }
 
+// ── поиск вещей в магазинах ────────────────────────────────
+
+function loadSearchCache() {
+  try {
+    const raw = localStorage.getItem(SEARCH_KEY);
+    if (!raw) return {};
+    const data = JSON.parse(raw);
+    if (!data || typeof data !== "object") return {};
+    const fresh = {};
+    const now = Date.now();
+    for (const [query, entry] of Object.entries(data)) {
+      if (entry && entry.at && now - entry.at < SEARCH_TTL && Array.isArray(entry.offers)) {
+        fresh[query] = entry;
+      }
+    }
+    return fresh;
+  } catch {
+    return {};
+  }
+}
+
+function persistSearchCache() {
+  try {
+    const entries = Object.entries(state.searchCache)
+      .sort((a, b) => b[1].at - a[1].at)
+      .slice(0, 20);
+    state.searchCache = Object.fromEntries(entries);
+    localStorage.setItem(SEARCH_KEY, JSON.stringify(state.searchCache));
+  } catch {
+    // кэшу не обязательно жить после перезагрузки
+  }
+}
+
+function shopFor(url) {
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return null;
+  }
+  return SHOPS.find((shop) => host === shop.host || host.endsWith("." + shop.host)) || null;
+}
+
+function parsePrice(text) {
+  if (!text) return null;
+  const source = String(text).replace(/\u00a0/g, " ");
+  const matches = [...source.matchAll(/(\d[\d\s]{2,9})\s*(?:₽|руб\.?|рублей)/gi)];
+  const prices = matches
+    .map((match) => Number(match[1].replace(/\s/g, "")))
+    .filter((value) => Number.isFinite(value) && value >= 100 && value <= 1000000);
+  if (!prices.length) return null;
+  return Math.min(...prices);
+}
+
+function itemQuery(item, gender) {
+  const words = gender === "женский" ? "женская" : gender === "мужской" ? "мужская" : "";
+  return `${item} ${words} купить недорого`.replace(/\s+/g, " ").trim().slice(0, 128);
+}
+
+async function deepseekSearch(query, signal) {
+  const response = await fetch(SEARCH_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${state.settings.key}`,
+    },
+    body: JSON.stringify({
+      query,
+      count: 10,
+      need_content: false,
+      ori_question: query.slice(0, 128),
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new AiError(aiErrorText(response.status), response.status);
+  }
+
+  const data = await response.json();
+  return Array.isArray(data.results) ? data.results : [];
+}
+
+async function deepseekFetch(url, signal) {
+  const response = await fetch(FETCH_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${state.settings.key}`,
+    },
+    body: JSON.stringify({ url }),
+    signal,
+  });
+
+  if (!response.ok) return null;
+
+  const data = await response.json();
+  return data && typeof data.content === "string" ? data.content : null;
+}
+
+async function findOffers(item, gender, signal) {
+  const query = itemQuery(item, gender);
+  const cached = state.searchCache[query];
+  if (cached && Date.now() - cached.at < SEARCH_TTL) return cached.offers;
+
+  const results = await deepseekSearch(query, signal);
+  const seen = new Set();
+  const offers = [];
+  let fetchBudget = 2;
+
+  for (const result of results) {
+    const shop = shopFor(result.url);
+    if (!shop || seen.has(result.url)) continue;
+    seen.add(result.url);
+
+    let price =
+      parsePrice(result.snippet) || parsePrice(result.title) || parsePrice(result.summary) || null;
+
+    if (!price && fetchBudget > 0) {
+      fetchBudget -= 1;
+      try {
+        const content = await deepseekFetch(result.url, signal);
+        if (content) price = parsePrice(content);
+      } catch (error) {
+        if (error && error.name === "AbortError") throw error;
+        // страница не открылась — оставим без цены, это нормально
+      }
+    }
+
+    offers.push({
+      shop: shop.name,
+      title: String(result.title || item).trim(),
+      url: result.url,
+      price,
+    });
+  }
+
+  offers.sort((a, b) => (a.price || Infinity) - (b.price || Infinity));
+  const top = offers.slice(0, 3);
+  state.searchCache[query] = { at: Date.now(), offers: top };
+  persistSearchCache();
+  return top;
+}
+
+function searchLinksFor(query) {
+  return SHOPS.slice(0, 3).map((shop) => ({
+    name: shop.name,
+    url: shop.search + encodeURIComponent(query),
+  }));
+}
+
 // ── образы под разбор ───────────────────────────────────────
 
 const OUTFITS_KEY = "naryady.obrazy.v1";
@@ -1872,8 +2037,181 @@ function buildOutfitCard(outfit, index) {
   dislike.addEventListener("click", () => replaceOutfit(index));
 
   buttons.append(like, dislike);
-  card.append(head, title, items, colors, whyTitle, why, buttons);
+
+  const buy = document.createElement("div");
+  buy.className = "outfit__buy";
+
+  if (outfit.liked) {
+    const buyBtn = document.createElement("button");
+    buyBtn.type = "button";
+    buyBtn.className = "btn btn--ghost outfit__buy-btn";
+    buyBtn.textContent = outfit.buyOpen ? "Скрыть поиск" : "Где купить";
+    buyBtn.addEventListener("click", () => {
+      outfit.buyOpen = !outfit.buyOpen;
+      renderOutfitCards();
+      if (!outfit.buyOpen) return;
+      const holder = document.getElementById(`offers-${index}`);
+      if (holder) loadOffers(outfit, holder, index);
+    });
+    buy.append(buyBtn);
+  }
+
+  if (outfit.buyOpen) {
+    const holder = document.createElement("div");
+    holder.className = "outfit__offers";
+    holder.id = `offers-${index}`;
+    outfit.items.forEach((item, itemIndex) => {
+      holder.append(buildOfferItem(outfit, itemIndex));
+    });
+    buy.append(holder);
+
+    const offerList = Object.values(outfit.offers || {}).flatMap((entry) =>
+      Array.isArray(entry) ? entry : []
+    );
+    if (offerList.some((offer) => offer.price)) {
+      const hint = document.createElement("p");
+      hint.className = "offers-hint";
+      hint.textContent = "Сначала самые дешёвые из найденных.";
+      buy.append(hint);
+    }
+
+    const note = document.createElement("p");
+    note.className = "offers-note";
+    note.textContent = "Цена на момент поиска — проверьте на сайте.";
+    buy.append(note);
+  }
+
+  card.append(head, title, items, colors, whyTitle, why, buttons, buy);
   return card;
+}
+
+function buildOfferItem(outfit, index) {
+  const item = outfit.items[index] ? outfit.items[index][1] : "";
+  const block = document.createElement("div");
+  block.className = "offers-item";
+  block.dataset.index = String(index);
+
+  const name = document.createElement("p");
+  name.className = "offers-item__name";
+  name.textContent = item;
+  block.append(name);
+
+  const result = outfit.offers ? outfit.offers[index] : null;
+
+  if (!result) {
+    const wait = document.createElement("p");
+    wait.className = "offers-wait";
+    wait.append(spinner(), document.createTextNode("Ищем, где дешевле…"));
+    block.append(wait);
+    return block;
+  }
+
+  if (result.error) {
+    const fail = document.createElement("p");
+    fail.className = "offers-empty";
+    fail.textContent = result.error;
+    block.append(fail, buildOfferLinks(item));
+    return block;
+  }
+
+  const list = Array.isArray(result) ? result : [];
+  if (list.length) {
+    const offers = document.createElement("div");
+    offers.className = "offers";
+    for (const offer of list) {
+      const row = document.createElement("div");
+      row.className = "offer";
+
+      const link = document.createElement("a");
+      link.href = offer.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = `${offer.shop} · ${offer.title}`;
+      link.title = `${offer.shop}: ${offer.title}`;
+
+      const price = document.createElement("span");
+      price.className = offer.price ? "offer__price" : "offer__price offer__price--unknown";
+      price.textContent = offer.price ? `${offer.price.toLocaleString("ru-RU")} ₽` : "цена на сайте";
+
+      row.append(link, price);
+      offers.append(row);
+    }
+    block.append(offers);
+    return block;
+  }
+
+  const empty = document.createElement("p");
+  empty.className = "offers-empty";
+  empty.textContent = "Ничего не нашли. Можно посмотреть поиск в магазинах:";
+  block.append(empty, buildOfferLinks(item));
+  return block;
+}
+
+function buildOfferLinks(item) {
+  const row = document.createElement("div");
+  row.className = "offers-links";
+  for (const link of searchLinksFor(itemQuery(item, state.profile.gender))) {
+    const a = document.createElement("a");
+    a.className = "chip offer-link";
+    a.href = link.url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = link.name;
+    row.append(a);
+  }
+  return row;
+}
+
+async function loadOffers(outfit, holder, cardIndex) {
+  outfit.offers = outfit.offers || {};
+
+  if (!hasAiKey()) {
+    outfit.items.forEach((item, index) => {
+      if (!outfit.offers[index]) {
+        outfit.offers[index] = {
+          error: "Чтобы искать вещи и цены, вставьте ключ DeepSeek в настройках.",
+        };
+      }
+    });
+    holder.replaceChildren();
+    outfit.items.forEach((item, index) => holder.append(buildOfferItem(outfit, index)));
+    return;
+  }
+
+  if (outfit.offersLoading) return;
+  outfit.offersLoading = true;
+
+  const controller = new AbortController();
+  state.offerAbort = controller;
+
+  for (let index = 0; index < outfit.items.length; index += 1) {
+    if (outfit.offers[index] && !outfit.offers[index].error) continue;
+
+    try {
+      const list = await findOffers(outfit.items[index][1], state.profile.gender, controller.signal);
+      outfit.offers[index] = list;
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        outfit.offersLoading = false;
+        return;
+      }
+      outfit.offers[index] = {
+        error: error instanceof AiError ? error.message : "Не получилось найти вещи.",
+      };
+    }
+
+    const old = holder.querySelector(`.offers-item[data-index="${index}"]`);
+    const fresh = buildOfferItem(outfit, index);
+    if (old) old.replaceWith(fresh);
+    else holder.append(fresh);
+  }
+
+  outfit.offersLoading = false;
+  state.offerAbort = null;
+  persistOutfits();
+  setOutfitStatus("ok", "Показали самые дешёвые из найденных.");
+  const focus = el.outfitCards.children[cardIndex]?.querySelector(".outfit__buy-btn");
+  if (focus) focus.focus();
 }
 
 function renderOutfitActions(mode) {
@@ -1888,6 +2226,10 @@ function renderOutfitActions(mode) {
     if (state.outfitAbort) {
       state.outfitAbort.abort();
       state.outfitAbort = null;
+    }
+    if (state.offerAbort) {
+      state.offerAbort.abort();
+      state.offerAbort = null;
     }
     showScreen("analysis");
     renderAnalysisActions();
@@ -2344,7 +2686,9 @@ class AppError extends Error {}
     state.settings.key = String(savedSettings.key || "");
     state.settings.model = AI_MODELS.some((item) => item.value === savedSettings.model)
       ? savedSettings.model
-      : "deepseek-v4-flash";
+      : savedSettings.model === "deepseek-v4-flash"
+        ? "deepseek-flash"
+        : "deepseek-flash";
   }
 
   const savedProfile = loadProfile();

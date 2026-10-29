@@ -996,6 +996,109 @@ h1 {
   color: #fff;
 }
 
+/* поиск вещей в магазинах */
+
+.outfit__buy {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.outfit__buy-btn {
+  margin: 0;
+  font-size: 14px;
+}
+
+.outfit__offers {
+  display: grid;
+  gap: 10px;
+}
+
+.offers-item {
+  display: grid;
+  gap: 5px;
+}
+
+.offers-item__name {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.offers {
+  display: grid;
+  gap: 4px;
+}
+
+.offer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+
+.offer a {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.offer__price {
+  flex-shrink: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.offer__price--unknown {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+.offers-hint,
+.offers-note {
+  margin: 0;
+  font-size: 12px;
+  color: #8f8478;
+}
+
+.offers-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.offers-empty {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+}
+
+.offers-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.offer-link {
+  font-size: 12.5px;
+  padding: 6px 11px;
+  text-decoration: none;
+}
+
 /* ── подвал ──────────────────────────────────────────── */
 
 .footer {
