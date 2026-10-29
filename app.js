@@ -34,7 +34,7 @@ const AI_MODELS = [
 
 const SEARCH_URL = `${DEEPSEEK_API}/v1/tools/search`;
 const FETCH_URL = `${DEEPSEEK_API}/v1/tools/fetch`;
-const SEARCH_KEY = "naryady.poisk.v2";
+const SEARCH_KEY = "naryady.poisk.v3";
 const SEARCH_TTL = 15 * 60 * 1000;
 
 const SHOPS = [
@@ -1189,23 +1189,35 @@ el.testSearch.addEventListener("click", async () => {
     return;
   }
 
-  setSettingsStatus("wait", "Ищем пробный запрос…");
+  setSettingsStatus("wait", "Ищем пробный запрос по магазинам…");
+
+  const sample = "белая рубашка";
+  const shops = [
+    ["lamoda.ru", "Lamoda"],
+    ["market.yandex.ru", "Маркет"],
+    ["wildberries.ru", "Wildberries"],
+    ["ozon.ru", "Ozon"],
+  ];
 
   try {
-    const results = await deepseekSearch("белая рубашка оверсайз купить недорого");
-    if (!results.length) {
+    const parts = [];
+    let total = 0;
+
+    for (const [host, name] of shops) {
+      const results = await deepseekSearch(shopQuery(host, sample, ""), undefined);
+      total += results.length;
+      parts.push(`${name}: ${results.length}`);
+    }
+
+    if (!total) {
       setSettingsStatus(
         "bad",
-        "Поиск вернул пусто. Возможно, на ключе не включён доступ к поиску или кончились деньги."
+        "Поиск не нашёл ничего ни в одном магазине. Возможно, доступ к поиску на ключе закрыт или кончились деньги."
       );
       return;
     }
 
-    const sites = [...new Set(results.map((item) => siteLabel(item)))].slice(0, 5);
-    setSettingsStatus(
-      "ok",
-      `Поиск работает: ${results.length} результатов. Сайты: ${sites.join(", ")}.`
-    );
+    setSettingsStatus("ok", `Пробный запрос «${sample}» — ${parts.join(", ")}.`);
   } catch (error) {
     setSettingsStatus(
       "bad",
@@ -1459,16 +1471,12 @@ function parsePrice(text) {
 
 function itemQuery(item, gender) {
   const words = gender === "женский" ? "женская" : gender === "мужской" ? "мужская" : "";
-  return `${item} ${words} купить недорого`.replace(/\s+/g, " ").trim().slice(0, 128);
+  return `${item} ${words}`.replace(/\s+/g, " ").trim().slice(0, 128);
 }
 
-function shopQuery(item) {
-  const base = "site:market.yandex.ru OR site:lamoda.ru OR site:wildberries.ru OR site:ozon.ru";
-  const full = `${base} ${item}`;
-  if (full.length <= 128) return full;
-  const short = `site:market.yandex.ru OR site:lamoda.ru ${item}`;
-  if (short.length <= 128) return short;
-  return `site:market.yandex.ru ${item}`.slice(0, 128);
+function shopQuery(shopHost, item, gender) {
+  const words = gender === "женский" ? "женская" : gender === "мужской" ? "мужская" : "";
+  return `site:${shopHost} ${item} ${words}`.replace(/\s+/g, " ").trim().slice(0, 128);
 }
 
 function siteLabel(result) {
@@ -1528,9 +1536,11 @@ function itemStem(item) {
     .toLowerCase()
     .replace(/[^а-яёa-z0-9\s-]/gi, " ")
     .split(/\s+/)
-    .filter((word) => word.length >= 4)
-    .sort((a, b) => b.length - a.length);
-  const word = words[0] || "";
+    .filter(Boolean);
+
+  // берём первое «настоящее» слово: обычно это и есть вещь
+  // («рубашка оверсайз» → «рубашк»), а не самое длинное
+  const word = words.find((part) => part.length >= 4) || words[0] || "";
   return word.slice(0, Math.max(4, word.length - 2));
 }
 
@@ -1544,54 +1554,63 @@ async function findOffers(item, gender, signal) {
   const cached = state.searchCache[query];
   if (cached && Date.now() - cached.at < SEARCH_TTL) return cached.offers;
 
-  // сначала ищем прямо в магазинах — так выше шанс попасть в товар, а не в статью
-  let results = await deepseekSearch(shopQuery(item), signal);
-
-  // не нашлось — ищем обычными словами и уже потом отбираем магазины
-  if (!results.length) {
-    results = await deepseekSearch(query, signal);
-  }
-
   const stem = itemStem(item);
   const seen = new Set();
   const shopOffers = [];
   const otherOffers = [];
   let fetchBudget = 2;
 
-  for (const result of results) {
-    if (!result || !result.url || seen.has(result.url)) continue;
-    seen.add(result.url);
+  const collect = (results) => {
+    for (const result of results) {
+      if (!result || !result.url || seen.has(result.url)) continue;
+      seen.add(result.url);
 
-    const haystack = `${result.title || ""} ${result.snippet || ""} ${result.summary || ""}`;
-    const relevant = matchesItem(haystack, stem);
-    const shop = shopFor(result.url);
+      const haystack = `${result.title || ""} ${result.snippet || ""} ${result.summary || ""}`;
+      if (!matchesItem(haystack, stem)) continue;
 
-    // заведомо не про эту вещь — не показываем, чтобы не путать
-    if (!relevant) continue;
+      const offer = {
+        shop: siteLabel(result),
+        title: String(result.title || item).trim(),
+        url: result.url,
+        price:
+          parsePrice(result.snippet) || parsePrice(result.title) || parsePrice(result.summary) || null,
+      };
 
-    let price =
-      parsePrice(result.snippet) || parsePrice(result.title) || parsePrice(result.summary) || null;
-
-    if (!price && fetchBudget > 0) {
-      fetchBudget -= 1;
-      try {
-        const content = await deepseekFetch(result.url, signal);
-        if (content) price = parsePrice(content);
-      } catch (error) {
-        if (error && error.name === "AbortError") throw error;
-        // страница не открылась — оставим без цены, это нормально
-      }
+      if (shopFor(result.url)) shopOffers.push(offer);
+      else otherOffers.push(offer);
     }
+  };
 
-    const offer = {
-      shop: siteLabel(result),
-      title: String(result.title || item).trim(),
-      url: result.url,
-      price,
-    };
+  // по очереди: Lamoda, Маркет, потом остальные. Останавливаемся, когда хватает
+  const queries = [
+    shopQuery("lamoda.ru", item, gender),
+    shopQuery("market.yandex.ru", item, gender),
+    shopQuery("wildberries.ru", item, gender),
+    shopQuery("ozon.ru", item, gender),
+  ];
 
-    if (shop) shopOffers.push(offer);
-    else otherOffers.push(offer);
+  for (const shopQueryText of queries) {
+    if (shopOffers.length >= 3) break;
+    const results = await deepseekSearch(shopQueryText, signal);
+    collect(results);
+  }
+
+  // если в магазинах пусто — обычный поиск без «купить недорого»
+  if (!shopOffers.length && !otherOffers.length) {
+    collect(await deepseekSearch(query, signal));
+  }
+
+  // цену со страницы достаём только там, где её ещё нет
+  for (const offer of shopOffers.concat(otherOffers)) {
+    if (offer.price || fetchBudget <= 0) continue;
+    fetchBudget -= 1;
+    try {
+      const content = await deepseekFetch(offer.url, signal);
+      if (content) offer.price = parsePrice(content);
+    } catch (error) {
+      if (error && error.name === "AbortError") throw error;
+      // страница не открылась — оставим без цены
+    }
   }
 
   shopOffers.sort((a, b) => (a.price || Infinity) - (b.price || Infinity));
