@@ -15,7 +15,10 @@
         <span class="brand__mark" aria-hidden="true"></span>
         <span class="brand__name">Подбор нарядов</span>
       </div>
-      <div class="steps" id="steps">Шаг 1 из 3</div>
+      <div class="topbar__right">
+        <div class="steps" id="steps">Шаг 1 из 3</div>
+        <button class="settings-btn" id="settingsBtn" type="button">Настройки</button>
+      </div>
     </header>
 
     <main class="main">
@@ -128,6 +131,7 @@
         </p>
 
         <p class="outfit-who" id="outfitWho"></p>
+        <p class="outfit-source" id="outfitSource"></p>
 
         <div class="status" id="outfitStatus" role="status" aria-live="polite"></div>
 
@@ -138,6 +142,61 @@
         </p>
 
         <div class="actions" id="outfitActions"></div>
+      </section>
+
+      <section class="screen" id="screen-settings" aria-labelledby="title-settings" hidden>
+        <p class="eyebrow">настройки</p>
+        <h1 id="title-settings" tabindex="-1">Ключ ИИ</h1>
+        <p class="lead">
+          Сейчас образы собирают наши правила. Если вставить ключ DeepSeek, образы
+          будет придумывать модель — живее и разнообразнее.
+        </p>
+
+        <div class="settings-card">
+          <label class="field">
+            <span class="field__label">Ключ DeepSeek</span>
+            <span class="field__row">
+              <input id="keyInput" type="password" autocomplete="off" spellcheck="false"
+                     placeholder="sk-…" aria-describedby="keyHint">
+              <button class="chip" id="showKey" type="button" aria-pressed="false">Показать</button>
+            </span>
+            <span class="field__hint" id="keyHint">
+              Начинается с «sk-». Взять можно в кабинете DeepSeek.
+            </span>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Модель</span>
+            <select id="modelSelect">
+              <option value="deepseek-v4-flash">V4 Flash — дешевле</option>
+              <option value="deepseek-v4-pro">V4 Pro — умнее</option>
+            </select>
+          </label>
+
+          <div class="status" id="settingsStatus" role="status" aria-live="polite"></div>
+
+          <div class="settings-actions">
+            <button class="btn btn--primary" id="saveKey" type="button">Сохранить и проверить</button>
+            <button class="linkbtn" id="deleteKey" type="button">Удалить ключ</button>
+            <button class="btn btn--ghost" id="backFromSettings" type="button">Назад</button>
+          </div>
+        </div>
+
+        <div class="notes">
+          <h2 class="notes__title">Что важно знать</h2>
+          <ul class="notes__list">
+            <li>Ключ остаётся на этом устройстве. Мы его не видим и не передаём
+              никуда, кроме самого DeepSeek.</li>
+            <li>Фото мы не отправляем никогда. Уходит только текст разбора:
+              пол, форма лица, черты, оттенки, контраст.</li>
+            <li>Запросы платные и списываются с вашего баланса DeepSeek. Один
+              подбор образов — меньше копейки.</li>
+            <li>Ключ хранится в браузере, поэтому любой, у кого есть доступ
+              к компьютеру, может его увидеть. Лучше сделать отдельный ключ
+              с лимитом трат.</li>
+            <li>Без ключа всё работает как раньше — на правилах.</li>
+          </ul>
+        </div>
       </section>
 
     </main>

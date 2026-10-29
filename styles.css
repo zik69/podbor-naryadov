@@ -82,6 +82,33 @@ body {
   white-space: nowrap;
 }
 
+.topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.settings-btn {
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.settings-btn:hover { color: var(--accent); }
+
+@media (max-width: 430px) {
+  .topbar__right { gap: 10px; }
+  .settings-btn { font-size: 12px; }
+  .steps { font-size: 10.5px; letter-spacing: .08em; }
+}
+
 /* ── общий каркас ────────────────────────────────────── */
 
 .main { flex: 1; container-type: inline-size; }
@@ -696,6 +723,104 @@ h1 {
 
 .compliment__back[hidden] { display: none; }
 
+/* ── настройки ───────────────────────────────────────── */
+
+.settings-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px 18px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .55);
+  border: 1px solid var(--line);
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+}
+
+.field__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.field__row {
+  display: flex;
+  gap: 8px;
+}
+
+.field__row input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fffdfa;
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+.field__row input:focus-visible,
+#modelSelect:focus-visible {
+  outline: 2px solid rgba(168, 85, 47, .4);
+  outline-offset: 2px;
+}
+
+.field__hint {
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: #8f8478;
+}
+
+#modelSelect {
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fffdfa;
+  font: inherit;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+.settings-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.settings-actions .btn { margin-top: 0; }
+.settings-actions .linkbtn { justify-self: start; }
+
+.notes {
+  margin-top: 20px;
+  padding: 15px 17px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .4);
+  border: 1px dashed var(--line);
+}
+
+.notes__title {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.notes__list {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
 /* ── образы ──────────────────────────────────────────── */
 
 .outfit-grid {
@@ -705,13 +830,21 @@ h1 {
 }
 
 .outfit-who {
-  margin: -6px 0 14px;
+  margin: -6px 0 2px;
   font-size: 11.5px;
   font-weight: 600;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--accent-dark);
 }
+
+.outfit-source {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: #8f8478;
+}
+
+.outfit-source:empty { display: none; }
 
 /* на широком экране образов делаем две колонки и больше места */
 @media (min-width: 900px) {

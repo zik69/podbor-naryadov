@@ -23,6 +23,14 @@ const LANDMARK_MODEL =
 
 const RAZBOR_KEY = "naryady.razbor.v1";
 const PROFILE_KEY = "naryady.profil.v1";
+const SETTINGS_KEY = "naryady.nastroyki.v1";
+
+const DEEPSEEK_API = "https://api.deepseek.com";
+
+const AI_MODELS = [
+  { value: "deepseek-v4-flash", label: "V4 Flash" },
+  { value: "deepseek-v4-pro", label: "V4 Pro" },
+];
 
 const GENDERS = [
   { value: "женский", label: "Женский" },
@@ -139,6 +147,17 @@ const el = {
   outfitCards: document.getElementById("outfitCards"),
   outfitNote: document.getElementById("outfitNote"),
   outfitWho: document.getElementById("outfitWho"),
+  outfitSource: document.getElementById("outfitSource"),
+  settingsBtn: document.getElementById("settingsBtn"),
+  screenSettings: document.getElementById("screen-settings"),
+  titleSettings: document.getElementById("title-settings"),
+  keyInput: document.getElementById("keyInput"),
+  showKey: document.getElementById("showKey"),
+  modelSelect: document.getElementById("modelSelect"),
+  settingsStatus: document.getElementById("settingsStatus"),
+  saveKey: document.getElementById("saveKey"),
+  deleteKey: document.getElementById("deleteKey"),
+  backFromSettings: document.getElementById("backFromSettings"),
   outfitActions: document.getElementById("outfitActions"),
 };
 
@@ -151,7 +170,12 @@ const state = {
   razbor: null,
   outfits: null,
   outfitRun: 0,
+  outfitAbort: null,
+  outfitBackup: null,
+  replacing: false,
+  lastScreen: "start",
   profile: { gender: "", hideCompliment: false },
+  settings: { key: "", model: "deepseek-v4-flash" },
 };
 
 let detectorPromise = null;
@@ -898,7 +922,7 @@ function renderAnalysisActions() {
     search.type = "button";
     search.className = "btn btn--primary";
     search.textContent = state.outfits ? "Смотреть образы" : "Подобрать образы";
-    search.addEventListener("click", startOutfits);
+    search.addEventListener("click", () => startOutfits());
     el.analysisActions.append(search);
   }
 
@@ -1012,6 +1036,327 @@ el.complimentBack.addEventListener("click", () => {
   renderCompliment();
   el.complimentHide.focus();
 });
+
+// ── настройки и ИИ ──────────────────────────────────────────
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (!data || data.v !== 1) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function persistSettings() {
+  try {
+    localStorage.setItem(
+      SETTINGS_KEY,
+      JSON.stringify({ v: 1, key: state.settings.key, model: state.settings.model })
+    );
+  } catch {
+    // хранилище может быть выключено — тогда просто не запоминаем
+  }
+}
+
+function hasAiKey() {
+  return Boolean(state.settings.key);
+}
+
+function openSettings() {
+  el.keyInput.value = state.settings.key;
+  el.keyInput.type = "password";
+  el.showKey.textContent = "Показать";
+  el.showKey.setAttribute("aria-pressed", "false");
+  el.modelSelect.value = state.settings.model;
+  clearStatus(el.settingsStatus);
+  if (hasAiKey()) setSettingsStatus("ok", "Ключ сохранён на этом устройстве.");
+  showScreen("settings");
+}
+
+function setSettingsStatus(kind, text) {
+  el.settingsStatus.className = `status status--${kind}`;
+  el.settingsStatus.replaceChildren();
+  if (kind === "wait") el.settingsStatus.append(spinner());
+  el.settingsStatus.append(document.createTextNode(text));
+}
+
+async function checkKey() {
+  const key = state.settings.key;
+  if (!key) return { ok: false, message: "Сначала вставьте ключ." };
+
+  try {
+    const response = await fetch(`${DEEPSEEK_API}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+
+    if (response.status === 401) {
+      return { ok: false, message: "Ключ не подошёл. Проверьте, что скопировали его целиком." };
+    }
+    if (response.status === 403) {
+      return { ok: false, message: "Ключ есть, но доступа к модели нет. Проверьте его в кабинете DeepSeek." };
+    }
+    if (!response.ok) {
+      return { ok: false, message: `DeepSeek ответил ошибкой ${response.status}. Попробуйте позже.` };
+    }
+
+    let balance = "";
+    try {
+      const info = await fetch(`${DEEPSEEK_API}/user/balance`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      if (info.ok) {
+        const data = await info.json();
+        const first = (data.balance_infos || [])[0];
+        if (first) balance = ` На счету: ${first.total_balance} ${first.currency}.`;
+      }
+    } catch {
+      // баланс — приятный бонус, без него проверка всё равно прошла
+    }
+
+    return { ok: true, message: `Ключ работает.${balance}` };
+  } catch {
+    return { ok: false, message: "Не получилось связаться с DeepSeek. Проверьте интернет." };
+  }
+}
+
+el.settingsBtn.addEventListener("click", openSettings);
+
+el.backFromSettings.addEventListener("click", () => {
+  showScreen(state.lastScreen || "start");
+});
+
+el.showKey.addEventListener("click", () => {
+  const shown = el.keyInput.type === "text";
+  el.keyInput.type = shown ? "password" : "text";
+  el.showKey.textContent = shown ? "Показать" : "Скрыть";
+  el.showKey.setAttribute("aria-pressed", String(!shown));
+});
+
+el.saveKey.addEventListener("click", async () => {
+  const key = el.keyInput.value.trim();
+  if (!key) {
+    setSettingsStatus("bad", "Вставьте ключ — без него модель не сможет работать.");
+    el.keyInput.focus();
+    return;
+  }
+
+  const before = state.settings.key;
+  state.settings.key = key;
+  state.settings.model = el.modelSelect.value;
+  persistSettings();
+
+  setSettingsStatus("wait", "Проверяем ключ…");
+  const result = await checkKey();
+  setSettingsStatus(result.ok ? "ok" : "bad", result.message);
+
+  if (result.ok) {
+    if (before !== key) {
+      // образы от правил больше не актуальны — их соберёт модель
+      clearOutfits();
+      el.outfitCards.replaceChildren();
+      clearStatus(el.outfitStatus);
+      if (state.razbor) renderAnalysisActions();
+    }
+    setSettingsStatus(
+      "ok",
+      `${result.message} Дальше образы будет собирать модель — нажмите «Подобрать образы».`
+    );
+  }
+});
+
+el.deleteKey.addEventListener("click", () => {
+  state.settings.key = "";
+  persistSettings();
+  el.keyInput.value = "";
+  clearOutfits();
+  el.outfitCards.replaceChildren();
+  clearStatus(el.outfitStatus);
+  if (state.razbor) renderAnalysisActions();
+  setSettingsStatus("ok", "Ключ удалён. Образы снова собираются по правилам.");
+});
+
+// ── образы, которые придумывает модель ─────────────────────
+
+class AiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status || 0;
+  }
+}
+
+function aiErrorText(status) {
+  if (status === 401) return "Ключ не подошёл — проверьте его в настройках.";
+  if (status === 402) return "Похоже, на ключе закончились деньги. Проверьте баланс в кабинете DeepSeek.";
+  if (status === 403) return "DeepSeek не пускает с этим ключом. Проверьте доступ в кабинете.";
+  if (status === 429) return "Слишком много запросов подряд. Подождите минуту и попробуйте снова.";
+  if (status >= 500) return "DeepSeek сейчас не отвечает. Попробуйте через минуту.";
+  return "Не получилось спросить модель. Попробуйте ещё раз.";
+}
+
+function buildAiMessages(values, gender, occasionLabels, exclude) {
+  const who =
+    gender === "женский"
+      ? "женщина"
+      : gender === "мужской"
+        ? "мужчина"
+        : "человек, пол не указан";
+
+  const system = [
+    "Ты — помощник по подбору одежды. Пишешь по-русски, простыми словами, коротко.",
+    "Правила:",
+    "- советуешь только одежду, обувь и аксессуары;",
+    "- не оцениваешь внешность, лицо и тело человека, не сравниваешь людей;",
+    "- не используешь слова «полный», «худой», «некрасиво», «идеально»;",
+    "- не придумываешь магазины, товары, цены и ссылки;",
+    "- не пишешь, что ты ИИ, и не извиняешься;",
+    "- отвечаешь строго одним JSON-объектом, без пояснений и без markdown.",
+  ].join("\n");
+
+  const shapeNote = `Форма лица: ${values.shape}. Черты: ${values.features}. Оттенки: ${values.temperature}. Контраст: ${values.contrast}.`;
+
+  const clothesRule =
+    gender === "женский"
+      ? "Можно предлагать юбки и каблук, если это уместно случаю."
+      : "Не предлагай юбки, платья и каблуки — только брюки и обычную обувь.";
+
+  const excludeNote = exclude && exclude.length
+    ? `\nНе повторяй эти вещи и цвета: ${exclude.join("; ")}.`
+    : "";
+
+  const user = `Человек: ${who}.
+${shapeNote}
+
+Собери образы для случаев: ${occasionLabels.join(", ")}.
+${clothesRule}${excludeNote}
+
+Верни JSON такой формы:
+{"outfits":[{"occasion":"на работу","title":"Спокойный образ на работу","items":[{"label":"Верх","value":"..."},{"label":"Низ","value":"..."},{"label":"Обувь","value":"..."},{"label":"Верхний слой","value":"..."}],"colors":[{"name":"песочный","hex":"#d9bd94"},{"name":"оливковый","hex":"#8b8b5a"}],"why":["причина, связанная с разбором","вторая причина","третья причина"]}]}
+
+Требования: ровно ${occasionLabels.length} образ(ов), в каждом 4 вещи, 2 цвета с настоящими hex-кодами и 3 короткие причины, связанные с разбором.`;
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+function aiColor(raw, fallback) {
+  const name = String(raw && raw.name ? raw.name : "").trim();
+  const hex = String(raw && raw.hex ? raw.hex : "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(hex)) return { name: name || "оттенок", hex };
+  if (name) {
+    const found = Object.values(PALETTES)
+      .flat()
+      .find((color) => color.name.toLowerCase() === name.toLowerCase());
+    if (found) return found;
+  }
+  return fallback;
+}
+
+function normalizeAiOutfit(raw, index, values) {
+  const occasion = OCCASIONS[index] || OCCASIONS[0];
+  const title = String(raw && raw.title ? raw.title : "").trim() || occasion.title;
+  const label = String(raw && raw.occasion ? raw.occasion : "").trim() || occasion.label;
+
+  const rawItems = Array.isArray(raw && raw.items) ? raw.items : [];
+  const items = rawItems
+    .map((item) => {
+      if (Array.isArray(item)) return [String(item[0] || ""), String(item[1] || "")];
+      return [String(item && item.label ? item.label : ""), String(item && item.value ? item.value : "")];
+    })
+    .filter((pair) => pair[0] && pair[1])
+    .slice(0, 5);
+  if (items.length < 3) return null;
+
+  const palette = PALETTES[values.temperature] || PALETTES["тёплые"];
+  const rawColors = Array.isArray(raw && raw.colors) ? raw.colors : [];
+  const colors = rawColors
+    .slice(0, 2)
+    .map((color, colorIndex) => aiColor(color, palette[colorIndex % palette.length]));
+  while (colors.length < 2) colors.push(palette[(index + colors.length) % palette.length]);
+
+  const why = (Array.isArray(raw && raw.why) ? raw.why : [])
+    .map((reason) => String(reason).trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  if (!why.length) return null;
+
+  return {
+    occasion: occasion.key,
+    label,
+    title,
+    items,
+    colors,
+    why,
+    variant: 0,
+    liked: false,
+  };
+}
+
+async function requestAiOutfits({ values, gender, labels, exclude, signal }) {
+  const response = await fetch(`${DEEPSEEK_API}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${state.settings.key}`,
+    },
+    body: JSON.stringify({
+      model: state.settings.model,
+      messages: buildAiMessages(values, gender, labels, exclude),
+      temperature: 0.8,
+      max_tokens: 1800,
+      response_format: { type: "json_object" },
+      stream: false,
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new AiError(aiErrorText(response.status), response.status);
+  }
+
+  const data = await response.json();
+  const text = (data.choices && data.choices[0] && data.choices[0].message
+    ? data.choices[0].message.content
+    : "") || "";
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new AiError("Модель ответила не по-нашему. Попробуйте ещё раз.");
+  }
+
+  const list = parsed && Array.isArray(parsed.outfits) ? parsed.outfits : [];
+  if (!list.length) throw new AiError("Модель не предложила образы. Попробуйте ещё раз.");
+  return list;
+}
+
+function restoreOutfitBackup() {
+  if (state.outfits || !state.outfitBackup) return;
+  state.outfits = state.outfitBackup;
+  state.outfitBackup = null;
+  persistOutfits();
+
+  if (!el.screenAnalysis.hidden) {
+    renderAnalysisActions();
+  } else if (!el.screenOutfits.hidden) {
+    renderOutfitCards();
+    renderOutfitSource();
+    renderOutfitActions("ready");
+  }
+}
+
+function showAiError(error) {  setOutfitStatus("bad", error instanceof AiError ? error.message : "Не получилось спросить модель.");
+  el.outfitNote.textContent =
+    "Можно попробовать снова — или собрать образы по правилам, это бесплатно.";
+  el.outfitNote.hidden = false;
+  renderOutfitActions("aiFailed");
+}
 
 // ── образы под разбор ───────────────────────────────────────
 
@@ -1315,31 +1660,81 @@ function generateOutfits(values, gender, round = 0) {
 }
 
 function replaceOutfit(index) {
+  if (state.replacing) return;
+
   const cards = state.outfits.cards;
   const current = cards[index];
   const occasion = OCCASIONS.find((item) => item.key === current.occasion) || OCCASIONS[index];
   const base = OCCASIONS.indexOf(occasion);
-  const previous = outfitSignature(current);
-  let variant = (current.variant || 0) + 1;
-  let next = buildOutfit(occasion, state.razbor.values, state.profile.gender, base, variant);
 
-  // новый образ не должен повторять ни старый, ни соседние карточки
-  for (let step = 0; step < 12; step += 1) {
-    const same = outfitSignature(next) === previous || cards.some(
-      (card, cardIndex) => cardIndex !== index && outfitSignature(card) === outfitSignature(next)
-    );
-    if (!same) break;
-    variant += 1;
-    next = buildOutfit(occasion, state.razbor.values, state.profile.gender, base, variant);
+  const byRules = () => {
+    const previous = outfitSignature(current);
+    let variant = (current.variant || 0) + 1;
+    let next = buildOutfit(occasion, state.razbor.values, state.profile.gender, base, variant);
+
+    // новый образ не должен повторять ни старый, ни соседние карточки
+    for (let step = 0; step < 12; step += 1) {
+      const same = outfitSignature(next) === previous || cards.some(
+        (card, cardIndex) => cardIndex !== index && outfitSignature(card) === outfitSignature(next)
+      );
+      if (!same) break;
+      variant += 1;
+      next = buildOutfit(occasion, state.razbor.values, state.profile.gender, base, variant);
+    }
+
+    cards[index] = next;
+    persistOutfits();
+    renderOutfitCards();
+    setOutfitStatus("ok", "Заменили на другой образ.");
+    el.outfitCards.children[index]?.querySelector(".outfit__like")?.focus();
+  };
+
+  if (state.outfits.source !== "ai" || !hasAiKey()) {
+    byRules();
+    return;
   }
 
-  cards[index] = next;
-  persistOutfits();
-  renderOutfitCards();
-  setOutfitStatus("ok", "Заменили на другой образ.");
+  const controller = new AbortController();
+  state.outfitAbort = controller;
+  state.replacing = true;
+  setOutfitStatus("wait", "Подбираем другой образ…");
 
-  const focus = el.outfitCards.children[index]?.querySelector(".outfit__like");
-  if (focus) focus.focus();
+  const exclude = [
+    current.title,
+    ...current.items.map((item) => item[1]),
+    ...current.colors.map((color) => color.name),
+  ];
+
+  requestAiOutfits({
+    values: state.razbor.values,
+    gender: state.profile.gender,
+    labels: [occasion.label],
+    exclude,
+    signal: controller.signal,
+  })
+    .then((list) => {
+      const next = normalizeAiOutfit(list[0], base, state.razbor.values);
+      if (!next) throw new AiError("Модель предложила непонятный образ.");
+      next.occasion = occasion.key;
+      cards[index] = next;
+      persistOutfits();
+      renderOutfitCards();
+      setOutfitStatus("ok", "Заменили на другой образ.");
+      el.outfitCards.children[index]?.querySelector(".outfit__like")?.focus();
+    })
+    .catch((error) => {
+      if (error && error.name === "AbortError") return;
+      console.error(error);
+      byRules();
+      setOutfitStatus(
+        "bad",
+        `${error instanceof AiError ? error.message : "Модель не ответила."} Пока заменили по правилам.`
+      );
+    })
+    .finally(() => {
+      state.replacing = false;
+      state.outfitAbort = null;
+    });
 }
 
 const OUTFIT_WHO = {
@@ -1352,10 +1747,24 @@ function renderOutfitWho() {
   el.outfitWho.textContent = OUTFIT_WHO[state.profile.gender] || OUTFIT_WHO[""];
 }
 
-function setOutfitStatus(kind, text) {  el.outfitStatus.className = `status status--${kind}`;
+function setOutfitStatus(kind, text) {
+  el.outfitStatus.className = `status status--${kind}`;
   el.outfitStatus.replaceChildren();
   if (kind === "wait") el.outfitStatus.append(spinner());
   el.outfitStatus.append(document.createTextNode(text));
+}
+
+function renderOutfitSource() {
+  if (!state.outfits) {
+    el.outfitSource.textContent = "";
+    return;
+  }
+  if (state.outfits.source === "ai") {
+    const model = AI_MODELS.find((item) => item.value === state.outfits.model);
+    el.outfitSource.textContent = `Собрано моделью DeepSeek${model ? " · " + model.label : ""}`;
+    return;
+  }
+  el.outfitSource.textContent = "Собрано по правилам";
 }
 
 function renderOutfitCards() {
@@ -1476,6 +1885,10 @@ function renderOutfitActions(mode) {
   back.textContent = "Назад к разбору";
   back.addEventListener("click", () => {
     state.outfitRun += 1;
+    if (state.outfitAbort) {
+      state.outfitAbort.abort();
+      state.outfitAbort = null;
+    }
     showScreen("analysis");
     renderAnalysisActions();
   });
@@ -1487,10 +1900,31 @@ function renderOutfitActions(mode) {
     cancel.textContent = "Отменить";
     cancel.addEventListener("click", () => {
       state.outfitRun += 1;
+      if (state.outfitAbort) {
+        state.outfitAbort.abort();
+        state.outfitAbort = null;
+      }
       showScreen("analysis");
       renderAnalysisActions();
     });
     el.outfitActions.append(cancel);
+    return;
+  }
+
+  if (mode === "aiFailed") {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "btn btn--primary";
+    retry.textContent = "Попробовать снова";
+    retry.addEventListener("click", () => startOutfits());
+
+    const rules = document.createElement("button");
+    rules.type = "button";
+    rules.className = "btn btn--ghost";
+    rules.textContent = "Собрать на правилах";
+    rules.addEventListener("click", () => startOutfits(true));
+
+    el.outfitActions.append(retry, rules, back);
     return;
   }
 
@@ -1499,7 +1933,7 @@ function renderOutfitActions(mode) {
     retry.type = "button";
     retry.className = "btn btn--primary";
     retry.textContent = "Попробовать снова";
-    retry.addEventListener("click", startOutfits);
+    retry.addEventListener("click", () => startOutfits());
     el.outfitActions.append(retry, back);
     return;
   }
@@ -1525,72 +1959,138 @@ function renderOutfitActions(mode) {
     again.className = "linkbtn";
     again.textContent = "Подобрать все образы заново";
     again.addEventListener("click", () => {
+      if (state.outfits && state.outfits.source === "ai" && hasAiKey()) {
+        state.outfitBackup = state.outfits;
+        state.outfits = null;
+        startOutfits();
+        return;
+      }
       const round = (state.outfitRound || 0) + 1;
       state.outfitRound = round;
       state.outfits = {
         v: 1,
+        source: "rules",
         cards: generateOutfits(state.razbor.values, state.profile.gender, round),
       };
       persistOutfits();
       renderOutfitCards();
+      renderOutfitSource();
       setOutfitStatus("ok", "Собрали новый набор.");
     });
     el.outfitActions.append(again);
   }
 }
 
-async function startOutfits() {
+async function startOutfits(forceRules = false) {
   showScreen("outfits");
   renderOutfitWho();
   el.outfitCards.replaceChildren();
 
-  if (!state.outfits) {
-    el.outfitNote.hidden = true;
-    setOutfitStatus("wait", "Подбираем образы под ваш разбор…");
-    renderOutfitActions("loading");
+  if (state.outfits) {
+    clearStatus(el.outfitStatus);
+    renderOutfitCards();
+    renderOutfitSource();
+    el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
+    el.outfitNote.hidden = false;
+    renderOutfitActions("ready");
+    return;
+  }
 
-    const run = ++state.outfitRun;
-    await new Promise((resolve) => setTimeout(resolve, 650));
-    if (run !== state.outfitRun) return;
+  el.outfitNote.hidden = true;
+  renderOutfitActions("loading");
+
+  const run = ++state.outfitRun;
+  const values = (state.razbor && state.razbor.values) || {};
+  const missing = RAZBOR_FIELDS.filter((field) => !values[field.key]);
+
+  if (missing.length) {
+    setOutfitStatus("bad", "В разборе не хватает значений — без них образы не собрать.");
+    el.outfitNote.textContent =
+      "Вернитесь к разбору и выберите значения вручную. Это пара нажатий.";
+    el.outfitNote.hidden = false;
+    renderOutfitActions("missing");
+    return;
+  }
+
+  if (!forceRules && hasAiKey()) {
+    const controller = new AbortController();
+    state.outfitAbort = controller;
+    setOutfitStatus("wait", "Спрашиваем модель DeepSeek…");
 
     try {
-      const values = state.razbor?.values || {};
-      const missing = RAZBOR_FIELDS.filter((field) => !values[field.key]);
-      if (missing.length) {
-        setOutfitStatus("bad", "В разборе не хватает значений — без них образы не собрать.");
-        el.outfitNote.textContent =
-          "Вернитесь к разбору и выберите значения вручную. Это пара нажатий.";
-        el.outfitNote.hidden = false;
-        renderOutfitActions("missing");
+      const labels = OCCASIONS.map((occasion) => occasion.label);
+      const list = await requestAiOutfits({
+        values,
+        gender: state.profile.gender,
+        labels,
+        exclude: [],
+        signal: controller.signal,
+      });
+      if (run !== state.outfitRun) {
+        restoreOutfitBackup();
         return;
       }
 
+      const cards = list
+        .slice(0, 4)
+        .map((raw, index) => normalizeAiOutfit(raw, index, values))
+        .filter(Boolean);
+
+      if (cards.length < 3) throw new AiError("Модель не собрала образы. Попробуйте ещё раз.");
+
       state.outfitRound = 0;
-      state.outfits = {
-        v: 1,
-        cards: generateOutfits(values, state.profile.gender),
-      };
+      state.outfits = { v: 1, source: "ai", model: state.settings.model, cards };
+      state.outfitBackup = null;
       persistOutfits();
       clearStatus(el.outfitStatus);
       renderOutfitCards();
+      renderOutfitSource();
       el.outfitNote.textContent =
-        "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
+        "Образы придумала модель. Если что-то не про вас — нажмите «Не нравится».";
       el.outfitNote.hidden = false;
       renderOutfitActions("ready");
     } catch (error) {
-      if (run !== state.outfitRun) return;
+      if (run !== state.outfitRun) {
+        restoreOutfitBackup();
+        return;
+      }
+      if (error && error.name === "AbortError") {
+        restoreOutfitBackup();
+        return;
+      }
       console.error(error);
-      setOutfitStatus("bad", "Не получилось подобрать образы. Попробуйте ещё раз — это быстро.");
-      renderOutfitActions("retry");
+      showAiError(error);
+    } finally {
+      state.outfitAbort = null;
     }
     return;
   }
 
-  clearStatus(el.outfitStatus);
-  renderOutfitCards();
-  el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
-  el.outfitNote.hidden = false;
-  renderOutfitActions("ready");
+  setOutfitStatus("wait", "Подбираем образы под ваш разбор…");
+  await new Promise((resolve) => setTimeout(resolve, 650));
+  if (run !== state.outfitRun) return;
+
+  try {
+    state.outfitRound = 0;
+    state.outfits = {
+      v: 1,
+      source: "rules",
+      cards: generateOutfits(values, state.profile.gender),
+    };
+    state.outfitBackup = null;
+    persistOutfits();
+    clearStatus(el.outfitStatus);
+    renderOutfitCards();
+    renderOutfitSource();
+    el.outfitNote.textContent = "Это идеи, а не правила. Нравится — оставьте, не нравится — замените.";
+    el.outfitNote.hidden = false;
+    renderOutfitActions("ready");
+  } catch (error) {
+    if (run !== state.outfitRun) return;
+    console.error(error);
+    setOutfitStatus("bad", "Не получилось подобрать образы. Попробуйте ещё раз — это быстро.");
+    renderOutfitActions("retry");
+  }
 }
 
 // ── сохранение разбора ──────────────────────────────────────
@@ -1719,17 +2219,21 @@ const SCREENS = {
   review: { node: () => el.screenReview, step: "Шаг 1 из 3" },
   analysis: { node: () => el.screenAnalysis, step: "Шаг 2 из 3" },
   outfits: { node: () => el.screenOutfits, step: "Шаг 3 из 3" },
+  settings: { node: () => el.screenSettings, step: "Настройки" },
 };
 
 function showScreen(name) {
   for (const key of Object.keys(SCREENS)) {
     SCREENS[key].node().hidden = key !== name;
   }
+  if (name !== "settings") state.lastScreen = name;
   el.steps.textContent = SCREENS[name].step;
+  el.settingsBtn.hidden = name === "settings";
 
   if (name === "review") el.titleReview.focus({ preventScroll: true });
   if (name === "analysis") el.titleAnalysis.focus({ preventScroll: true });
   if (name === "outfits") el.titleOutfits.focus({ preventScroll: true });
+  if (name === "settings") el.titleSettings.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -1835,6 +2339,14 @@ class AppError extends Error {}
 // ── запуск: если разбор уже сохранён, показываем его ────────
 
 (function boot() {
+  const savedSettings = loadSettings();
+  if (savedSettings) {
+    state.settings.key = String(savedSettings.key || "");
+    state.settings.model = AI_MODELS.some((item) => item.value === savedSettings.model)
+      ? savedSettings.model
+      : "deepseek-v4-flash";
+  }
+
   const savedProfile = loadProfile();
   if (savedProfile) {
     state.profile = {
