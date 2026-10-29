@@ -34,7 +34,7 @@ const AI_MODELS = [
 
 const SEARCH_URL = `${DEEPSEEK_API}/v1/tools/search`;
 const FETCH_URL = `${DEEPSEEK_API}/v1/tools/fetch`;
-const SEARCH_KEY = "naryady.poisk.v1";
+const SEARCH_KEY = "naryady.poisk.v2";
 const SEARCH_TTL = 15 * 60 * 1000;
 
 const SHOPS = [
@@ -1600,8 +1600,12 @@ async function findOffers(item, gender, signal) {
   // если магазины не нашлись, но интернет нашёл подходящее — покажем честно
   if (!top.length) top.push(...otherOffers.slice(0, 3));
 
-  state.searchCache[query] = { at: Date.now(), offers: top };
-  persistSearchCache();
+  // пустой ответ не запоминаем: иначе «ничего не нашли» залипнет на 15 минут
+  if (top.length) {
+    state.searchCache[query] = { at: Date.now(), offers: top };
+    persistSearchCache();
+  }
+
   return top;
 }
 
